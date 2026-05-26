@@ -1,0 +1,69 @@
+"""Global configuration for the news AI system."""
+
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# LLM Configuration
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "sk-your-key-here")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
+
+# Server
+HOST = os.getenv("HOST", "0.0.0.0")
+PORT = int(os.getenv("PORT", "8000"))
+
+# Crawler intervals (seconds)
+CRAWL_INTERVAL = int(os.getenv("CRAWL_INTERVAL", "1800"))
+
+SCHEDULE_ENABLED = os.getenv("SCHEDULE_ENABLED", "true").lower() == "true"
+NEWSNOW_CRAWL_INTERVAL = int(os.getenv("NEWSNOW_CRAWL_INTERVAL", "1800"))
+RSS_CRAWL_INTERVAL = int(os.getenv("RSS_CRAWL_INTERVAL", "1800"))
+
+SCHEDULE_MIN_INTERVAL = 60
+
+KEYWORDS_FILE = os.getenv("KEYWORDS_FILE", str(Path(__file__).parent / "keywords.txt"))
+
+# Publishing
+PUBLISH_RETRY = int(os.getenv("PUBLISH_RETRY", "3"))
+
+# Available news sources (NewsNow + RSS)
+NEWS_SOURCES = {
+    # NewsNow platforms
+    "cls-hot": "财联社热门",
+    "cls-telegraph": "财联社电报",
+    "wallstreetcn-hot": "华尔街见闻",
+    "cankaoxiaoxi": "参考消息",
+    "thepaper": "澎湃新闻",
+    "toutiao": "今日头条",
+    "xueqiu": "雪球",
+    "weibo": "微博",
+    "douyin": "抖音",
+    # RSS feeds
+    "hacker-news": "Hacker News",
+    "ruanyifeng": "阮一峰的网络日志",
+}
+
+NEWSNOW_PLATFORMS = {
+    "cls-hot": "财联社热门",
+    "cls-telegraph": "财联社电报",
+    "wallstreetcn-hot": "华尔街见闻",
+    "cankaoxiaoxi": "参考消息",
+    "thepaper": "澎湃新闻",
+    "toutiao": "今日头条",
+    "xueqiu": "雪球",
+    "weibo": "微博",
+    "douyin": "抖音",
+}
+
+NEWSNOW_API_URL = os.getenv("NEWSNOW_API_URL", "https://newsnow.busiyi.world/api/s")
+
+# Publishing platforms
+PUBLISH_PLATFORMS = {
+    "xiaohongshu": "小红书",
+    "wechat_mp": "微信公众号",
+    "douyin": "抖音",
+}

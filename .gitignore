@@ -1,0 +1,36 @@
+# 虚拟环境
+venv/
+.env
+.env.local
+.env.*.local
+
+# 依赖
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 构建产物
+frontend/dist/
+
+# 数据库
+*.db
+
+# 日志
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 编辑器
+*.bak
+*.tmp

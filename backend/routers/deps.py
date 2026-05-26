@@ -1,0 +1,275 @@
+"""Shared state and dependencies for all routers.
+
+Centralizes in-memory stores, singletons, locks, and helper functions
+so that routers can import from one place without circular dependencies.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+import httpx
+from fastapi import HTTPException
+
+from config import (
+    NEWS_SOURCES,
+    PUBLISH_PLATFORMS,
+    KEYWORDS_FILE,
+    SCHEDULE_ENABLED,
+    NEWSNOW_CRAWL_INTERVAL,
+    RSS_CRAWL_INTERVAL,
+    SCHEDULE_MIN_INTERVAL,
+)
+from crawlers import (
+    NewsNowCrawler,
+    NewsNowBatchCrawler,
+    PLATFORM_CONFIG,
+    RSSBatchCrawler,
+    RSSFeedConfig,
+    DEFAULT_RSS_FEEDS,
+)
+from crawlers.filter import KeywordFilter
+from agents import NewsInterpreter, StyleType
+from agents.style_manager import prompt_manager
+from publishers import XiaohongshuPublisher, WechatMpPublisher, DouyinPublisher
+from database import (
+    append_news,
+    save_news,
+    update_news_content,
+    save_article,
+    save_publish_record,
+)
+
+logger = logging.getLogger(__name__)
+
+# ── In-memory stores ──────────────────────────────────────────────────
+
+news_store: list[dict[str, Any]] = []
+article_store: list[dict[str, Any]] = []
+publish_log: list[dict[str, Any]] = []
+
+# ── Schedule state ────────────────────────────────────────────────────
+
+schedule_running: bool = False
+newsnow_interval: int = NEWSNOW_CRAWL_INTERVAL
+rss_interval: int = RSS_CRAWL_INTERVAL
+last_newsnow_crawl: str | None = None
+last_rss_crawl: str | None = None
+
+# ── Concurrency locks ─────────────────────────────────────────────────
+
+news_lock = asyncio.Lock()
+article_lock = asyncio.Lock()
+
+# ── Crawler registry ─────────────────────────────────────────────────
+
+NEWSNOW_CRAWLERS: dict[str, NewsNowCrawler] = {}
+for platform_id in PLATFORM_CONFIG:
+    try:
+        NEWSNOW_CRAWLERS[platform_id] = NewsNowCrawler(platform_id)
+    except ValueError:
+        pass
+
+newsnow_batch = NewsNowBatchCrawler()
+rss_batch = RSSBatchCrawler(DEFAULT_RSS_FEEDS)
+
+# ── AI interpreter ────────────────────────────────────────────────────
+
+interpreter = NewsInterpreter(mock=False)
+
+# ── Publishers ────────────────────────────────────────────────────────
+
+PUBLISHERS: dict[str, Any] = {
+    "xiaohongshu": XiaohongshuPublisher(),
+    "wechat_mp": WechatMpPublisher(),
+    "douyin": DouyinPublisher(),
+}
+
+# ── Keyword filter ────────────────────────────────────────────────────
+
+kw_filter = KeywordFilter(KEYWORDS_FILE)
+
+# ── SSE headers ───────────────────────────────────────────────────────
+
+SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+# ── Helpers ───────────────────────────────────────────────────────────
+
+
+def find_news(news_id: str) -> dict | None:
+    return next((n for n in news_store if n["news_id"] == news_id), None)
+
+
+def find_news_batch(ids: list[str]) -> list[dict]:
+    return [n for n in news_store if n["news_id"] in ids]
+
+
+def find_article(article_id: str) -> dict | None:
+    return next((a for a in article_store if a.get("article_id") == article_id), None)
+
+
+def resolve_style(style_str: str) -> StyleType:
+    try:
+        return StyleType(style_str)
+    except ValueError:
+        raise HTTPException(
+            400,
+            f"Invalid style: {style_str}. Choose from: {[e.value for e in StyleType]}",
+        )
+
+
+async def fetch_article_content(url: str) -> str:
+    """Fetch and extract main text content from a URL."""
+    if not url:
+        return ""
+    try:
+        from bs4 import BeautifulSoup
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            })
+            resp.raise_for_status()
+            resp.encoding = resp.charset_encoding or "utf-8"
+            soup = BeautifulSoup(resp.text, "lxml")
+            for tag in soup(["script", "style", "nav", "header", "footer", "aside", "iframe"]):
+                tag.decompose()
+            candidates = [
+                soup.find("article"),
+                soup.find("div", class_=lambda c: c and any(k in str(c).lower() for k in ["article", "content", "post", "entry", "detail", "body"])),
+                soup.find("div", id=lambda i: i and any(k in str(i).lower() for k in ["article", "content", "post", "entry", "detail", "body"])),
+            ]
+            main = next((c for c in candidates if c), soup.find("body") or soup)
+            paragraphs = main.find_all(["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li"])
+            if not paragraphs:
+                return main.get_text(separator="\n", strip=True)[:5000]
+            parts = []
+            for p in paragraphs:
+                text = p.get_text(strip=True)
+                if len(text) > 10:
+                    tag = p.name
+                    if tag.startswith("h"):
+                        parts.append(f"{'#' * int(tag[1])} {text}")
+                    elif tag == "blockquote":
+                        parts.append(f"> {text}")
+                    else:
+                        parts.append(text)
+            return "\n\n".join(parts)[:10000]
+    except Exception as e:
+        logger.warning("Failed to fetch content from %s: %s", url, e)
+        return ""
+
+
+async def ensure_content(item: dict) -> None:
+    """Ensure a news item has real article content, fetching on-demand if needed."""
+    existing = item.get("content", "")
+    summary = item.get("summary", "")
+    if existing and existing != summary and not existing.startswith(summary[:50]):
+        return
+
+    media_type = (item.get("extra", {}).get("media_type", "article")
+                  if isinstance(item.get("extra"), dict) else "article")
+
+    if media_type == "video":
+        await _ensure_video_content(item)
+        return
+
+    url = item.get("url", "")
+    if not url:
+        return
+    content = await fetch_article_content(url)
+    if content:
+        item["content"] = content
+        await update_news_content(item["news_id"], content)
+
+
+async def _ensure_video_content(item: dict) -> None:
+    """Extract metadata from video pages (description, tags, etc.)."""
+    summary = item.get("summary", "")
+    url = item.get("url", "")
+    if not url:
+        return
+
+    metadata = await _extract_video_metadata(url)
+    if metadata:
+        parts = []
+        if metadata.get("description"):
+            parts.append(f"视频简介：{metadata['description']}")
+        if metadata.get("tags"):
+            parts.append(f"标签：{', '.join(metadata['tags'])}")
+        if metadata.get("author"):
+            parts.append(f"作者：{metadata['author']}")
+        if metadata.get("stats"):
+            parts.append(metadata["stats"])
+        if parts:
+            item["content"] = "\n".join(parts)
+            await update_news_content(item["news_id"], item["content"])
+            return
+
+    if summary:
+        item["content"] = f"[视频内容] {summary}"
+
+
+async def _extract_video_metadata(url: str) -> dict | None:
+    """Try to extract metadata from a video page."""
+    try:
+        from bs4 import BeautifulSoup
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            })
+            resp.raise_for_status()
+            resp.encoding = resp.charset_encoding or "utf-8"
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            result = {}
+
+            desc_tag = soup.find("meta", attrs={"name": "description"})
+            if desc_tag and desc_tag.get("content"):
+                result["description"] = desc_tag["content"].strip()[:500]
+
+            kw_tag = soup.find("meta", attrs={"name": "keywords"})
+            if kw_tag and kw_tag.get("content"):
+                tags = [t.strip() for t in kw_tag["content"].split(",") if t.strip()]
+                if tags:
+                    result["tags"] = tags[:10]
+
+            og_title = soup.find("meta", attrs={"property": "og:title"})
+            author_tag = soup.find("meta", attrs={"name": "author"})
+            if not author_tag:
+                author_tag = soup.find("meta", attrs={"property": "og:article:author"})
+            if author_tag and author_tag.get("content"):
+                result["author"] = author_tag["content"].strip()
+
+            stats_parts = []
+            for og_stat in [
+                ("og:video:duration", "时长"),
+                ("og:video:view_count", "播放量"),
+            ]:
+                stat_tag = soup.find("meta", attrs={"property": og_stat[0]})
+                if stat_tag and stat_tag.get("content"):
+                    stats_parts.append(f"{og_stat[1]}: {stat_tag['content']}")
+            if stats_parts:
+                result["stats"] = " | ".join(stats_parts)
+
+            return result if result else None
+    except Exception as e:
+        logger.warning("Failed to extract video metadata from %s: %s", url, e)
+        return None
