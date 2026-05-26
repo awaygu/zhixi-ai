@@ -106,6 +106,21 @@ class NewsInterpreter:
             style_prompt=style_prompt, news_text=news,
         )
 
+    def build_prompt_text(
+        self,
+        news_list: list[dict],
+        style: StyleType = StyleType.WECHAT_MP,
+        prompt: str | None = None,
+        message: str | None = None,
+    ) -> str:
+        """Build and return the full prompt text (system + human) for display."""
+        if message:
+            news = _news_text(news_list)
+            human = self.pm.chat_template.format(message=message, news_text=news)
+        else:
+            human = self._build_generate_human_message(news_list, style, prompt)
+        return f"[System]\n{self.pm.system}\n\n[User]\n{human}"
+
     async def interpret(
         self,
         news_list: list[dict],

@@ -51,6 +51,10 @@
 
       <!-- Article content -->
       <div v-else-if="news.url" class="detail-iframe-wrap">
+        <div v-if="isJsRendered" class="js-rendered-hint">
+          <el-icon><Warning /></el-icon>
+          <span>此页面为动态加载内容，如未显示正文请点击"新窗口打开"查看</span>
+        </div>
         <iframe
           :src="news.url"
           class="detail-iframe"
@@ -75,7 +79,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useNewsStore } from '@/stores'
-import { SOURCE_LABELS, VIDEO_SOURCES } from '@/types'
+import { SOURCE_LABELS, VIDEO_SOURCES, JS_RENDERED_SOURCES } from '@/types'
 
 const store = useNewsStore()
 const news = computed(() => store.currentDetailNews)
@@ -85,6 +89,13 @@ const isVideo = computed(() => {
   const mediaType = news.value.extra?.media_type
   if (mediaType === 'video') return true
   return VIDEO_SOURCES.has(news.value.source)
+})
+
+const isJsRendered = computed(() => {
+  if (!news.value) return false
+  const mediaType = news.value.extra?.media_type
+  if (mediaType === 'js_rendered') return true
+  return JS_RENDERED_SOURCES.has(news.value.source)
 })
 
 const videoContent = computed(() => {
@@ -246,6 +257,24 @@ function formatTime(iso: string): string {
   overflow: hidden;
   margin-top: 12px;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.js-rendered-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #fdf6ec;
+  border-bottom: 1px solid #e4e7ed;
+  font-size: 13px;
+  color: #e6a23c;
+  flex-shrink: 0;
+}
+
+.js-rendered-hint .el-icon {
+  flex-shrink: 0;
 }
 
 .detail-iframe {

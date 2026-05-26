@@ -44,6 +44,8 @@ from database import (
 
 logger = logging.getLogger(__name__)
 
+JS_RENDERED_SOURCES = {"toutiao", "cankaoxiaoxi", "weibo", "wallstreetcn-hot", "thepaper"}
+
 # ── In-memory stores ──────────────────────────────────────────────────
 
 news_store: list[dict[str, Any]] = []
@@ -143,8 +145,10 @@ async def fetch_article_content(url: str) -> str:
             resp.raise_for_status()
             resp.encoding = resp.charset_encoding or "utf-8"
             soup = BeautifulSoup(resp.text, "lxml")
+
             for tag in soup(["script", "style", "nav", "header", "footer", "aside", "iframe"]):
                 tag.decompose()
+
             candidates = [
                 soup.find("article"),
                 soup.find("div", class_=lambda c: c and any(k in str(c).lower() for k in ["article", "content", "post", "entry", "detail", "body"])),
@@ -152,23 +156,73 @@ async def fetch_article_content(url: str) -> str:
             ]
             main = next((c for c in candidates if c), soup.find("body") or soup)
             paragraphs = main.find_all(["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li"])
-            if not paragraphs:
-                return main.get_text(separator="\n", strip=True)[:5000]
-            parts = []
-            for p in paragraphs:
-                text = p.get_text(strip=True)
-                if len(text) > 10:
-                    tag = p.name
-                    if tag.startswith("h"):
-                        parts.append(f"{'#' * int(tag[1])} {text}")
-                    elif tag == "blockquote":
-                        parts.append(f"> {text}")
-                    else:
-                        parts.append(text)
-            return "\n\n".join(parts)[:10000]
+            if paragraphs:
+                parts = []
+                for p in paragraphs:
+                    text = p.get_text(strip=True)
+                    if len(text) > 10:
+                        tag = p.name
+                        if tag.startswith("h"):
+                            parts.append(f"{'#' * int(tag[1])} {text}")
+                        elif tag == "blockquote":
+                            parts.append(f"> {text}")
+                        else:
+                            parts.append(text)
+                result = "\n\n".join(parts)[:10000]
+                if len(result) > 100:
+                    return result
+
+            body_text = main.get_text(separator="\n", strip=True)[:5000]
+            if len(body_text) > 200:
+                return body_text
+
+            meta = _extract_meta_description(soup)
+            if meta:
+                return meta
+
+            return body_text
     except Exception as e:
         logger.warning("Failed to fetch content from %s: %s", url, e)
         return ""
+
+
+def _extract_meta_description(soup) -> str:
+    """Extract article description from meta tags as fallback."""
+    parts = []
+
+    og_desc = soup.find("meta", attrs={"property": "og:description"})
+    if og_desc and og_desc.get("content"):
+        text = og_desc["content"].strip()
+        if len(text) > 30:
+            parts.append(text)
+
+    if not parts:
+        meta_desc = soup.find("meta", attrs={"name": "description"})
+        if meta_desc and meta_desc.get("content"):
+            text = meta_desc["content"].strip()
+            if len(text) > 30:
+                parts.append(text)
+
+    for ld in soup.find_all("script", type="application/ld+json"):
+        try:
+            import json
+            data = json.loads(ld.string or "")
+            if isinstance(data, dict):
+                for key in ("articleBody", "description", "text"):
+                    val = data.get(key, "")
+                    if val and len(str(val)) > 30:
+                        parts.append(str(val).strip())
+                        break
+                if not parts:
+                    for key in ("articleBody", "description"):
+                        val = data.get("@graph", [{}])[0].get(key, "") if data.get("@graph") else ""
+                        if val and len(str(val)) > 30:
+                            parts.append(str(val).strip())
+                            break
+        except Exception:
+            continue
+
+    return "\n\n".join(parts)[:5000] if parts else ""
 
 
 async def ensure_content(item: dict) -> None:
@@ -185,6 +239,11 @@ async def ensure_content(item: dict) -> None:
         await _ensure_video_content(item)
         return
 
+    source = item.get("source", "")
+    if source in JS_RENDERED_SOURCES:
+        _ensure_limited_content(item)
+        return
+
     url = item.get("url", "")
     if not url:
         return
@@ -192,6 +251,26 @@ async def ensure_content(item: dict) -> None:
     if content:
         item["content"] = content
         await update_news_content(item["news_id"], content)
+    else:
+        _ensure_limited_content(item)
+
+
+def _ensure_limited_content(item: dict) -> None:
+    """Set limited content for JS-rendered or failed-fetch sources."""
+    summary = item.get("summary", "")
+    title = item.get("title", "")
+    parts = [f"[全文需在浏览器中查看]"]
+    if title:
+        parts.append(f"标题：{title}")
+    if summary and summary != title:
+        parts.append(f"摘要：{summary}")
+    item["content"] = "\n".join(parts)
+
+
+def is_limited_content(item: dict) -> bool:
+    """Check if the item has limited content (cannot be processed by AI)."""
+    content = item.get("content", "")
+    return content.startswith("[全文需在浏览器中查看]")
 
 
 async def _ensure_video_content(item: dict) -> None:

@@ -55,11 +55,11 @@ import RightPanel from '@/components/RightPanel.vue'
 
 const columnsRef = ref<HTMLElement | null>(null)
 
-const leftWidth = ref(280)
+const leftWidth = ref(360)
 const centerWidth = ref(500)
 const rightWidth = ref(520)
 
-const MIN_LEFT = 220
+const MIN_LEFT = 260
 const MIN_CENTER = 360
 const MIN_RIGHT = 380
 

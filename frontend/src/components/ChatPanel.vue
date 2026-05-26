@@ -6,6 +6,16 @@
           <el-avatar :size="32" :icon="msg.role === 'user' ? 'User' : 'Sparkles'" />
         </div>
         <div class="msg-bubble">
+          <div v-if="msg.prompt" class="prompt-block">
+            <div class="prompt-header" @click="msg.promptExpanded = !msg.promptExpanded">
+              <el-icon size="14"><Document /></el-icon>
+              <span>提交的 Prompt</span>
+              <el-icon size="12" class="prompt-toggle">
+                <component :is="msg.promptExpanded ? 'ArrowUp' : 'ArrowDown'" />
+              </el-icon>
+            </div>
+            <div v-if="msg.promptExpanded" class="prompt-body">{{ msg.prompt }}</div>
+          </div>
           <div class="msg-content" v-html="renderMarkdown(msg.content)"></div>
           <span v-if="msg.streaming" class="streaming-cursor">▊</span>
         </div>
@@ -46,6 +56,8 @@ interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   streaming?: boolean
+  prompt?: string
+  promptExpanded?: boolean
 }
 
 const messages = ref<ChatMessage[]>([
@@ -90,6 +102,17 @@ async function sendChat() {
   streamChat(msg, store.selectedNewsIds, {
     onLoading(message) {
       messages.value[msgIdx].content = `⏳ ${message}`
+      scrollToBottom()
+    },
+    onPrompt(prompt) {
+      messages.value[msgIdx].prompt = prompt
+      messages.value[msgIdx].promptExpanded = false
+      scrollToBottom()
+    },
+    onLimited(message) {
+      messages.value[msgIdx].content = `ℹ️ ${message}`
+      messages.value[msgIdx].streaming = false
+      generating.value = false
       scrollToBottom()
     },
     onChunk(text) {
@@ -158,6 +181,47 @@ watch(() => messages.value.length, scrollToBottom)
 .msg-row.user .msg-bubble {
   background: #409eff;
   color: #fff;
+}
+
+.prompt-block {
+  margin-bottom: 8px;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.prompt-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #fafbfc;
+  font-size: 12px;
+  color: #909399;
+  cursor: pointer;
+  user-select: none;
+}
+
+.prompt-header:hover {
+  background: #f5f7fa;
+}
+
+.prompt-toggle {
+  margin-left: auto;
+}
+
+.prompt-body {
+  padding: 8px;
+  font-size: 12px;
+  color: #606266;
+  background: #fafbfc;
+  border-top: 1px solid #e4e7ed;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: 'Consolas', 'Monaco', monospace;
+  line-height: 1.5;
 }
 
 .msg-content {

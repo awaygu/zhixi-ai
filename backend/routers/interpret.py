@@ -32,6 +32,14 @@ class GenerateArticleRequest(BaseModel):
     prompt: str | None = None
 
 
+LIMITED_CONTENT_MSG = "该新闻原文为动态加载内容，无法自动获取正文。请在详情中点击「新窗口打开」查看原文，获取足够信息后再进行解读。"
+
+
+def _check_limited_items(items: list[dict]) -> list[str]:
+    """Return titles of items with limited content."""
+    return [item.get("title", "") for item in items if deps.is_limited_content(item)]
+
+
 @router.post("/interpret")
 async def interpret_news(req: InterpretRequest):
     item = deps.find_news(req.news_id)
@@ -39,6 +47,9 @@ async def interpret_news(req: InterpretRequest):
         raise HTTPException(404, f"News not found: {req.news_id}")
 
     await deps.ensure_content(item)
+    if deps.is_limited_content(item):
+        return {"news_id": req.news_id, "style": req.style, "interpretation": LIMITED_CONTENT_MSG}
+
     style = deps.resolve_style(req.style)
     result = await deps.interpreter.interpret([item], style)
     return {"news_id": req.news_id, "style": req.style, "interpretation": result}
@@ -49,6 +60,11 @@ async def chat_interpret(req: ChatRequest):
     items = deps.find_news_batch(req.news_ids)
     for item in items:
         await deps.ensure_content(item)
+
+    limited = _check_limited_items(items)
+    if limited and not any(not deps.is_limited_content(i) for i in items):
+        return {"response": LIMITED_CONTENT_MSG}
+
     result = await deps.interpreter.chat(req.message, items)
     return {"response": result}
 
@@ -61,6 +77,11 @@ async def generate_article(req: GenerateArticleRequest):
 
     for item in items:
         await deps.ensure_content(item)
+
+    limited = _check_limited_items(items)
+    if limited and not any(not deps.is_limited_content(i) for i in items):
+        raise HTTPException(400, LIMITED_CONTENT_MSG)
+
     style = deps.resolve_style(req.style)
     article = await deps.interpreter.generate_article(items, style, req.title, prompt=req.prompt)
     article["article_id"] = f"art_{len(deps.article_store) + 1}"
@@ -83,6 +104,15 @@ async def interpret_news_stream(req: InterpretRequest):
     async def event_stream():
         yield f"data: {json.dumps({'type': 'loading', 'message': '正在获取原文内容...'}, ensure_ascii=False)}\n\n"
         await deps.ensure_content(item)
+
+        if deps.is_limited_content(item):
+            yield f"data: {json.dumps({'type': 'limited', 'message': LIMITED_CONTENT_MSG}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        prompt_text = deps.interpreter.build_prompt_text([item], style)
+        yield f"data: {json.dumps({'type': 'prompt', 'content': prompt_text}, ensure_ascii=False)}\n\n"
+
         async for chunk in deps.interpreter.astream_interpret([item], style):
             data = json.dumps({"type": "chunk", "content": chunk}, ensure_ascii=False)
             yield f"data: {data}\n\n"
@@ -100,6 +130,16 @@ async def chat_interpret_stream(req: ChatRequest):
             yield f"data: {json.dumps({'type': 'loading', 'message': '正在获取原文内容...'}, ensure_ascii=False)}\n\n"
             for item in items:
                 await deps.ensure_content(item)
+
+        limited = _check_limited_items(items) if items else []
+        if limited and not any(not deps.is_limited_content(i) for i in items):
+            yield f"data: {json.dumps({'type': 'limited', 'message': LIMITED_CONTENT_MSG}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        prompt_text = deps.interpreter.build_prompt_text(items, message=req.message)
+        yield f"data: {json.dumps({'type': 'prompt', 'content': prompt_text}, ensure_ascii=False)}\n\n"
+
         async for chunk in deps.interpreter.astream_chat(req.message, items):
             data = json.dumps({"type": "chunk", "content": chunk}, ensure_ascii=False)
             yield f"data: {data}\n\n"
@@ -139,6 +179,15 @@ async def generate_article_stream(req: GenerateArticleRequest):
         yield f"data: {json.dumps({'type': 'loading', 'message': '正在获取原文内容...'}, ensure_ascii=False)}\n\n"
         for item in items:
             await deps.ensure_content(item)
+
+        limited = _check_limited_items(items)
+        if limited and not any(not deps.is_limited_content(i) for i in items):
+            yield f"data: {json.dumps({'type': 'limited', 'message': LIMITED_CONTENT_MSG}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        prompt_text = deps.interpreter.build_prompt_text(items, style, prompt=req.prompt)
+        yield f"data: {json.dumps({'type': 'prompt', 'content': prompt_text}, ensure_ascii=False)}\n\n"
 
         full_content = ""
         async for chunk in deps.interpreter.astream_interpret(items, style, prompt=req.prompt):

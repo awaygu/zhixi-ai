@@ -133,6 +133,8 @@ export interface StreamCallbacks {
   onDone: () => void
   onError: (error: string) => void
   onLoading?: (message: string) => void
+  onPrompt?: (prompt: string) => void
+  onLimited?: (message: string) => void
 }
 
 async function consumeSSE(path: string, body: Record<string, any>, callbacks: StreamCallbacks) {
@@ -172,6 +174,12 @@ async function consumeSSE(path: string, body: Record<string, any>, callbacks: St
             const parsed = JSON.parse(payload)
             if (parsed.type === 'chunk' && parsed.content) {
               callbacks.onChunk(parsed.content)
+            } else if (parsed.type === 'prompt' && parsed.content) {
+              callbacks.onPrompt?.(parsed.content)
+            } else if (parsed.type === 'limited') {
+              callbacks.onLimited?.(parsed.message || '内容受限')
+            } else if (parsed.type === 'error') {
+              callbacks.onError(parsed.message || '处理失败')
             } else if (parsed.type === 'loading') {
               callbacks.onLoading?.(parsed.message || '加载中...')
             } else if (parsed.type === 'done') {

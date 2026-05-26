@@ -40,6 +40,16 @@
 
     <div v-if="generatedContent || generating" class="preview-area">
       <el-divider style="margin: 8px 0" />
+      <div v-if="submittedPrompt" class="prompt-block">
+        <div class="prompt-header" @click="promptExpanded = !promptExpanded">
+          <el-icon size="14"><Document /></el-icon>
+          <span>提交的 Prompt</span>
+          <el-icon size="12" class="prompt-toggle">
+            <component :is="promptExpanded ? 'ArrowUp' : 'ArrowDown'" />
+          </el-icon>
+        </div>
+        <div v-if="promptExpanded" class="prompt-body">{{ submittedPrompt }}</div>
+      </div>
       <div class="preview-header">
         <span class="preview-title">{{ articleTitle || 'AI 生成结果' }}</span>
         <el-tag v-if="currentStyle" size="small" :type="getStyleTagType(currentStyle)">
@@ -82,6 +92,8 @@ const articleTitle = ref('')
 const userPrompt = ref('')
 const generatedContent = ref('')
 const generatedArticleId = ref('')
+const submittedPrompt = ref('')
+const promptExpanded = ref(false)
 
 const currentStyle = computed({
   get: () => store.currentStyle,
@@ -115,6 +127,8 @@ async function generateArticle() {
   generating.value = true
   generatedContent.value = ''
   generatedArticleId.value = `art_stream_${Date.now()}`
+  submittedPrompt.value = ''
+  promptExpanded.value = false
 
   streamGenerateArticle(
     store.selectedNewsIds,
@@ -122,6 +136,14 @@ async function generateArticle() {
     {
       onLoading() {
         scrollToBottom()
+      },
+      onPrompt(prompt) {
+        submittedPrompt.value = prompt
+        promptExpanded.value = false
+      },
+      onLimited(message) {
+        generatedContent.value = `ℹ️ ${message}`
+        generating.value = false
       },
       onChunk(text) {
         generatedContent.value += text
@@ -179,6 +201,47 @@ function addToArticles() {
   font-size: 13px;
   color: #606266;
   white-space: nowrap;
+}
+
+.prompt-block {
+  margin-bottom: 8px;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.prompt-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #fafbfc;
+  font-size: 12px;
+  color: #909399;
+  cursor: pointer;
+  user-select: none;
+}
+
+.prompt-header:hover {
+  background: #f5f7fa;
+}
+
+.prompt-toggle {
+  margin-left: auto;
+}
+
+.prompt-body {
+  padding: 8px;
+  font-size: 12px;
+  color: #606266;
+  background: #fafbfc;
+  border-top: 1px solid #e4e7ed;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: 'Consolas', 'Monaco', monospace;
+  line-height: 1.5;
 }
 
 .preview-area {

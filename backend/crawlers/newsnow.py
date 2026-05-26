@@ -105,6 +105,11 @@ class NewsNowCrawler(BaseCrawler):
             item_url = entry.get("url", "")
             mobile_url = entry.get("mobileUrl", "")
 
+            if self.platform_id == "toutiao" and item_url:
+                tid_match = __import__("re").search(r"/(\d+)/?", item_url)
+                if tid_match:
+                    item_url = f"https://m.toutiao.com/i{tid_match.group(1)}/"
+
             items.append(NewsItem(
                 news_id=f"{self.alias}_{dedup_key}",
                 title=title,
