@@ -46,6 +46,7 @@ AGENT_SYSTEM_PROMPT = """\
 5. **多源对比** — 使用 compare_sources 工具获取不同来源的报道后进行对比分析
 6. **每日简报** — 使用 get_briefing_data 工具获取新闻数据后生成简报
 7. **执行操作** — 使用 refresh_news / refresh_source 工具刷新新闻数据
+8. **知识库检索** — 使用 search_knowledge_base 工具搜索用户上传的知识库文档，获取相关文档片段作为参考
 
 ## 生成文章的风格指南
 
@@ -143,6 +144,7 @@ TOOL_DISPLAY_NAMES = {
     "compare_sources": "对比分析",
     "get_news_content": "获取新闻内容",
     "get_briefing_data": "获取简报数据",
+    "search_knowledge_base": "搜索知识库",
 }
 
 
@@ -333,7 +335,13 @@ def _create_tools(current_news_id: str | None, selected_news_ids: list[str]):
             "data": "\n\n".join(sections),
         }, ensure_ascii=False)
 
-    return [refresh_news, refresh_source, get_trends, search_news, compare_sources, get_news_content, get_briefing_data]
+    @tool
+    async def search_knowledge_base(query: str, top_k: int = 5) -> str:
+        """搜索用户上传的知识库文档，查找与查询最相关的文档片段。当用户提到知识库、文档、资料、上传的文件等内容时调用此工具。"""
+        from routers.knowledge import kb_search_internal
+        return await kb_search_internal(query, top_k)
+
+    return [refresh_news, refresh_source, get_trends, search_news, compare_sources, get_news_content, get_briefing_data, search_knowledge_base]
 
 
 # ── Trends (standalone endpoint for action bar) ────────────────

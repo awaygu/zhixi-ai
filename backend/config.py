@@ -70,3 +70,11 @@ PUBLISH_PLATFORMS = {
     "wechat_mp": "微信公众号",
     "douyin": "抖音",
 }
+
+# DashScope
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
+
+# Knowledge Base
+KB_CHUNK_SIZE = int(os.getenv("KB_CHUNK_SIZE", "500"))
+KB_CHUNK_OVERLAP = int(os.getenv("KB_CHUNK_OVERLAP", "50"))
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", str(Path(__file__).parent / "uploads"))

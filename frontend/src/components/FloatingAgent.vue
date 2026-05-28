@@ -6,23 +6,56 @@
     @click="openPanel"
   >
     <div class="bubble-inner" @click="openPanel">
-      <svg width="26" height="26" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <svg width="28" height="28" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
         <defs>
-          <linearGradient id="glow1" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#7dd3fc"/>
-            <stop offset="100%" stop-color="#38bdf8"/>
+          <linearGradient id="techGrad1" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#7c3aed"/>
+            <stop offset="50%" stop-color="#8b5cf6"/>
+            <stop offset="100%" stop-color="#7c3aed"/>
           </linearGradient>
+          <linearGradient id="techGrad2" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#38bdf8"/>
+            <stop offset="100%" stop-color="#a78bfa"/>
+          </linearGradient>
+          <radialGradient id="coreGlow" cx="24" cy="24" r="9" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#7c3aed" stop-opacity="0.95"/>
+            <stop offset="50%" stop-color="#8b5cf6" stop-opacity="0.45"/>
+            <stop offset="100%" stop-color="#c4b5fd" stop-opacity="0"/>
+          </radialGradient>
         </defs>
-        <circle cx="24" cy="24" r="20" stroke="url(#glow1)" stroke-width="2" fill="none" opacity="0.7">
-          <animateTransform attributeName="transform" type="rotate" from="0 24 24" to="360 24 24" dur="8s" repeatCount="indefinite"/>
+        <path d="M24 4 L42 14 L42 34 L24 44 L6 34 L6 14 Z" stroke="url(#techGrad1)" stroke-width="1.5" fill="none" opacity="0.55">
+          <animateTransform attributeName="transform" type="rotate" from="0 24 24" to="360 24 24" dur="14s" repeatCount="indefinite"/>
+        </path>
+        <path d="M24 8 L38.5 16.5 L38.5 31.5 L24 40 L9.5 31.5 L9.5 16.5 Z" stroke="url(#techGrad2)" stroke-width="1" fill="none" opacity="0.4">
+          <animateTransform attributeName="transform" type="rotate" from="360 24 24" to="0 24 24" dur="11s" repeatCount="indefinite"/>
+        </path>
+        <circle cx="24" cy="24" r="9" fill="url(#coreGlow)">
+          <animate attributeName="r" values="9;10.5;9" dur="3s" repeatCount="indefinite"/>
         </circle>
-        <circle cx="24" cy="24" r="14" stroke="url(#glow1)" stroke-width="1.5" fill="none" opacity="0.5">
-          <animateTransform attributeName="transform" type="rotate" from="360 24 24" to="0 24 24" dur="6s" repeatCount="indefinite"/>
+        <circle cx="24" cy="24" r="4.5" fill="#7c3aed" opacity="0.9">
+          <animate attributeName="opacity" values="0.9;0.6;0.9" dur="2.5s" repeatCount="indefinite"/>
         </circle>
-        <path d="M24 14 L28 20 L35 21 L30 26 L31 33 L24 30 L17 33 L18 26 L13 21 L20 20 Z" fill="#38bdf8" opacity="0.9"/>
-        <circle cx="24" cy="24" r="3" fill="#fff" opacity="0.9">
-          <animate attributeName="opacity" values="0.9;0.4;0.9" dur="2s" repeatCount="indefinite"/>
-        </circle>
+        <circle cx="24" cy="24" r="2" fill="#fff" opacity="0.95"/>
+        <g stroke="url(#techGrad2)" stroke-width="0.9" opacity="0.55" stroke-linecap="round">
+          <line x1="24" y1="15.5" x2="24" y2="12">
+            <animate attributeName="opacity" values="0.55;0.2;0.55" dur="3.5s" repeatCount="indefinite"/>
+          </line>
+          <line x1="31.5" y1="20" x2="34" y2="18">
+            <animate attributeName="opacity" values="0.2;0.55;0.2" dur="3.5s" begin="0.6s" repeatCount="indefinite"/>
+          </line>
+          <line x1="31.5" y1="28" x2="34" y2="30">
+            <animate attributeName="opacity" values="0.55;0.2;0.55" dur="3.5s" begin="1.2s" repeatCount="indefinite"/>
+          </line>
+          <line x1="24" y1="32.5" x2="24" y2="36">
+            <animate attributeName="opacity" values="0.2;0.55;0.2" dur="3.5s" begin="1.8s" repeatCount="indefinite"/>
+          </line>
+          <line x1="16.5" y1="28" x2="14" y2="30">
+            <animate attributeName="opacity" values="0.55;0.2;0.55" dur="3.5s" begin="2.4s" repeatCount="indefinite"/>
+          </line>
+          <line x1="16.5" y1="20" x2="14" y2="18">
+            <animate attributeName="opacity" values="0.2;0.55;0.2" dur="3.5s" begin="3s" repeatCount="indefinite"/>
+          </line>
+        </g>
       </svg>
     </div>
   </div>
@@ -39,9 +72,17 @@
     <div class="panel-header" @mousedown="startDrag">
       <div class="header-left">
         <svg width="20" height="20" viewBox="0 0 48 48" fill="none">
-          <circle cx="24" cy="24" r="14" stroke="#7dd3fc" stroke-width="2" fill="none" opacity="0.6"/>
-          <path d="M24 14 L28 20 L35 21 L30 26 L31 33 L24 30 L17 33 L18 26 L13 21 L20 20 Z" fill="#7dd3fc" opacity="0.8"/>
-          <circle cx="24" cy="24" r="3" fill="#fff" opacity="0.8"/>
+          <path d="M24 8 L38.5 16.5 L38.5 31.5 L24 40 L9.5 31.5 L9.5 16.5 Z" stroke="#a78bfa" stroke-width="1.5" fill="none" opacity="0.6"/>
+          <circle cx="24" cy="24" r="7" fill="#ede9fe" opacity="0.8"/>
+          <circle cx="24" cy="24" r="3" fill="#7c3aed" opacity="0.85"/>
+          <g stroke="#a78bfa" stroke-width="0.8" opacity="0.45" stroke-linecap="round">
+            <line x1="24" y1="17" x2="24" y2="14"/>
+            <line x1="30" y1="20.5" x2="33" y2="19"/>
+            <line x1="30" y1="27.5" x2="33" y2="29"/>
+            <line x1="24" y1="31" x2="24" y2="34"/>
+            <line x1="18" y1="27.5" x2="15" y2="29"/>
+            <line x1="18" y1="20.5" x2="15" y2="19"/>
+          </g>
         </svg>
         <span>AI 助手</span>
       </div>
@@ -827,20 +868,69 @@ onBeforeUnmount(() => {
 }
 
 .bubble-inner {
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #ede9fe 0%, #dbeafe 50%, #ede9fe 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.25);
-  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 3px 16px rgba(139, 92, 246, 0.3), 0 1px 4px rgba(59, 130, 246, 0.15);
+  transition: transform 0.25s, box-shadow 0.25s;
+  border: 2px solid rgba(167, 139, 250, 0.35);
+  position: relative;
+}
+
+.bubble-inner::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 21px;
+  background: conic-gradient(from 0deg, #a78bfa, #7dd3fc, #c4b5fd, #7dd3fc, #a78bfa);
+  opacity: 0;
+  transition: opacity 0.3s;
+  z-index: -1;
+  animation: borderSpin 6s linear infinite;
+}
+
+@keyframes borderSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .bubble-inner:hover {
-  transform: scale(1.06);
-  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.35);
+  transform: scale(1.08);
+  box-shadow: 0 6px 28px rgba(139, 92, 246, 0.4), 0 2px 8px rgba(59, 130, 246, 0.2);
+}
+
+.bubble-inner:hover::before {
+  opacity: 0.55;
+}
+
+.bubble-inner::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 18px;
+  background: conic-gradient(from 0deg, #06b6d4, #8b5cf6, #06b6d4);
+  opacity: 0;
+  transition: opacity 0.3s;
+  z-index: -1;
+  animation: borderSpin 4s linear infinite;
+}
+
+@keyframes borderSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.bubble-inner:hover {
+  transform: scale(1.08);
+  box-shadow: 0 6px 24px rgba(196, 181, 253, 0.45), 0 2px 8px rgba(186, 230, 253, 0.3);
+}
+
+.bubble-inner:hover::before {
+  opacity: 0.6;
 }
 
 .agent-panel {

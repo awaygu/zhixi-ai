@@ -40,6 +40,7 @@ from routers.schedule import router as schedule_router
 from routers.keywords import router as keywords_router
 from routers.prompts import router as prompts_router
 from routers.agent import router as agent_router
+from routers.knowledge import router as knowledge_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -117,6 +118,7 @@ app.include_router(schedule_router)
 app.include_router(keywords_router)
 app.include_router(prompts_router)
 app.include_router(agent_router)
+app.include_router(knowledge_router)
 
 
 if __name__ == "__main__":

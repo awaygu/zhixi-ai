@@ -1,7 +1,7 @@
 /** Backend API request wrappers. */
 
 import axios from 'axios'
-import type { NewsItem, Article, PublishRecord, StyleType } from '@/types'
+import type { NewsItem, Article, PublishRecord, StyleType, KBDoc, KBSearchResult } from '@/types'
 
 const api = axios.create({
   baseURL: '/api',
@@ -271,6 +271,7 @@ export interface AgentAction {
 export interface AgentStreamCallbacks extends StreamCallbacks {
   onAction?: (action: AgentAction) => void
   onLoadingDone?: () => void
+  onSources?: (sources: { filename: string; score: number }[]) => void
 }
 
 /** Stream agent chat (general chat with action detection). */
@@ -329,6 +330,8 @@ async function consumeAgentSSE(path: string, body: Record<string, any>, callback
               callbacks.onLoading?.(parsed.message || '加载中...')
             } else if (parsed.type === 'loading_done') {
               callbacks.onLoadingDone?.()
+            } else if (parsed.type === 'sources' && parsed.sources) {
+              callbacks.onSources?.(parsed.sources)
             } else if (parsed.type === 'meta') {
               callbacks.onMeta?.(parsed)
             } else if (parsed.type === 'done') {
@@ -352,4 +355,45 @@ export async function executeAction(action: string, params?: Record<string, any>
   const body: Record<string, any> = { action, ...params }
   const res = await api.post('/agent/execute', body)
   return res.data
+}
+
+// ── Knowledge Base ────────────────────────────────────────────
+
+/** Upload a document to the knowledge base. */
+export async function uploadDocument(file: File): Promise<{ doc_id: string; filename: string; chunk_count: number; file_size: number }> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await api.post('/knowledge/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
+  return res.data
+}
+
+/** Fetch all knowledge base documents. */
+export async function fetchKBDocuments(): Promise<{ documents: KBDoc[]; total_chunks: number }> {
+  const res = await api.get('/knowledge/documents', { timeout: 60000 })
+  return res.data
+}
+
+/** Delete a knowledge base document. */
+export async function deleteKBDocument(docId: string): Promise<{ deleted: boolean; doc_id: string; chunks_removed: number }> {
+  const res = await api.delete(`/knowledge/documents/${encodeURIComponent(docId)}`, { timeout: 60000 })
+  return res.data
+}
+
+/** Semantic search in knowledge base. */
+export async function searchKnowledgeBase(query: string, topK = 5): Promise<{ results: KBSearchResult[]; total: number }> {
+  const res = await api.post('/knowledge/search', { query, top_k: topK }, { timeout: 60000 })
+  return res.data
+}
+
+/** Stream KB RAG chat. */
+export function kbStreamChat(message: string, docIds: string[], callbacks: AgentStreamCallbacks, topK = 5) {
+  return consumeAgentSSE('/api/knowledge/chat/stream', { message, doc_ids: docIds, top_k: topK }, callbacks)
+}
+
+/** Stream KB RAG article generation. */
+export function kbStreamGenerate(message: string, style: StyleType, callbacks: AgentStreamCallbacks, docIds: string[] = [], topK = 5) {
+  return consumeAgentSSE('/api/knowledge/generate/stream', { message, style, doc_ids: docIds, top_k: topK }, callbacks)
 }

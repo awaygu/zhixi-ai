@@ -59,3 +59,32 @@ export const PLATFORM_LABELS: Record<string, string> = {
   wechat_mp: '微信公众号',
   douyin: '抖音',
 }
+
+// ── Knowledge Base ────────────────────────────────────────────
+
+export interface KBDoc {
+  doc_id: string
+  filename: string
+  file_type: string
+  chunk_count: number
+  file_size: number
+  upload_time: string
+  status: string
+}
+
+export interface KBSearchResult {
+  chunk_id: number
+  doc_id: string
+  filename: string
+  page: number
+  text: string
+  preview: string
+  score: number
+}
+
+export interface KBSource {
+  filename: string
+  page: number
+  score: number
+  preview: string
+}

@@ -49,6 +49,31 @@ async def init_db() -> None:
                 extra TEXT
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS kb_documents (
+                doc_id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                file_type TEXT,
+                chunk_count INTEGER DEFAULT 0,
+                file_size INTEGER DEFAULT 0,
+                upload_time TEXT DEFAULT (datetime('now')),
+                status TEXT DEFAULT 'ready'
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS kb_chunks (
+                chunk_id TEXT PRIMARY KEY,
+                doc_id TEXT NOT NULL,
+                chunk_index INTEGER DEFAULT 0,
+                page INTEGER DEFAULT 0,
+                text TEXT NOT NULL,
+                FOREIGN KEY (doc_id) REFERENCES kb_documents(doc_id) ON DELETE CASCADE
+            )
+        """)
+        try:
+            await db.execute("ALTER TABLE kb_chunks ADD COLUMN page INTEGER DEFAULT 0")
+        except Exception:
+            pass
         await db.commit()
     logger.info("Database initialized: %s", DB_PATH)
 
@@ -203,4 +228,102 @@ async def load_publish_log() -> list[dict[str, Any]]:
                 "timestamp": row["timestamp"],
                 "extra": json.loads(row["extra"]) if row["extra"] else {},
             })
+        return result
+
+
+# ── Knowledge Base ─────────────────────────────────────────────
+
+async def save_kb_doc(doc: dict[str, Any]) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT OR REPLACE INTO kb_documents
+                (doc_id, filename, file_type, chunk_count, file_size, upload_time, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                doc["doc_id"],
+                doc["filename"],
+                doc.get("file_type", ""),
+                doc.get("chunk_count", 0),
+                doc.get("file_size", 0),
+                doc.get("upload_time", ""),
+                doc.get("status", "ready"),
+            ),
+        )
+        await db.commit()
+
+
+async def load_kb_docs() -> list[dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM kb_documents ORDER BY upload_time DESC")
+        rows = await cursor.fetchall()
+        return [
+            {
+                "doc_id": row["doc_id"],
+                "filename": row["filename"],
+                "file_type": row["file_type"],
+                "chunk_count": row["chunk_count"],
+                "file_size": row["file_size"],
+                "upload_time": row["upload_time"],
+                "status": row["status"],
+            }
+            for row in rows
+        ]
+
+
+async def delete_kb_doc(doc_id: str) -> list[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT chunk_id FROM kb_chunks WHERE doc_id = ?", (doc_id,)
+        )
+        rows = await cursor.fetchall()
+        chunk_ids = [row["chunk_id"] for row in rows]
+        await db.execute("DELETE FROM kb_chunks WHERE doc_id = ?", (doc_id,))
+        await db.execute("DELETE FROM kb_documents WHERE doc_id = ?", (doc_id,))
+        await db.commit()
+    return chunk_ids
+
+
+async def save_kb_chunks(chunks: list[dict[str, Any]]) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        for chunk in chunks:
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO kb_chunks (chunk_id, doc_id, chunk_index, page, text)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    chunk["chunk_id"],
+                    chunk["doc_id"],
+                    chunk.get("chunk_index", 0),
+                    chunk.get("page", 0),
+                    chunk["text"],
+                ),
+            )
+        await db.commit()
+
+
+async def load_kb_chunk_texts(chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        result = {}
+        for cid in chunk_ids:
+            cursor = await db.execute(
+                "SELECT c.chunk_id, c.text, c.page, c.doc_id, d.filename "
+                "FROM kb_chunks c LEFT JOIN kb_documents d ON c.doc_id = d.doc_id "
+                "WHERE c.chunk_id = ?",
+                (cid,),
+            )
+            row = await cursor.fetchone()
+            if row:
+                result[cid] = {
+                    "chunk_id": row["chunk_id"],
+                    "text": row["text"],
+                    "page": row["page"],
+                    "doc_id": row["doc_id"],
+                    "filename": row["filename"],
+                }
         return result

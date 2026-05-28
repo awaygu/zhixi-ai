@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { NewsItem, Article, PublishRecord, StyleType } from '@/types'
+import type { NewsItem, Article, PublishRecord, StyleType, KBDoc } from '@/types'
 import {
   fetchNews,
   refreshNews,
@@ -13,6 +13,9 @@ import {
   refreshNewsNow,
   fetchRSSFeeds,
   refreshRSS,
+  fetchKBDocuments,
+  uploadDocument,
+  deleteKBDocument,
 } from '@/api'
 
 export const useNewsStore = defineStore('news', () => {
@@ -174,6 +177,39 @@ export const useNewsStore = defineStore('news', () => {
   const agentDockedRight = ref(false)
   const agentPanelWidth = ref(440)
 
+  // ── Knowledge Base ────────────────────────────────────────────
+
+  const kbDocuments = ref<KBDoc[]>([])
+  const kbTotalChunks = ref(0)
+  const kbUploading = ref(false)
+  const kbDeleting = ref(false)
+
+  async function loadKBDocuments() {
+    const data = await fetchKBDocuments()
+    kbDocuments.value = data.documents
+    kbTotalChunks.value = data.total_chunks
+  }
+
+  async function uploadKBDoc(file: File) {
+    kbUploading.value = true
+    try {
+      await uploadDocument(file)
+      await loadKBDocuments()
+    } finally {
+      kbUploading.value = false
+    }
+  }
+
+  async function deleteKBDoc(docId: string) {
+    kbDeleting.value = true
+    try {
+      await deleteKBDocument(docId)
+      await loadKBDocuments()
+    } finally {
+      kbDeleting.value = false
+    }
+  }
+
   return {
     newsItems,
     currentSource,
@@ -206,5 +242,12 @@ export const useNewsStore = defineStore('news', () => {
     refreshNewsNowFeeds,
     loadRSSFeeds,
     refreshRSSFeeds,
+    kbDocuments,
+    kbTotalChunks,
+    kbUploading,
+    kbDeleting,
+    loadKBDocuments,
+    uploadKBDoc,
+    deleteKBDoc,
   }
 })
