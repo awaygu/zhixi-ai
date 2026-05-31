@@ -14,7 +14,9 @@ from config import (
     SCHEDULE_ENABLED,
     NEWSNOW_CRAWL_INTERVAL,
     RSS_CRAWL_INTERVAL,
+    NEWSNOW_API_URL,
 )
+from crawlers.newsnow import check_newsnow_health, FALLBACK_API_URL
 from database import (
     init_db,
     load_news,
@@ -45,8 +47,31 @@ from routers.knowledge import router as knowledge_router
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+NEWSNOW_WAIT_TIMEOUT = 10
+NEWSNOW_WAIT_INTERVAL = 1
+
+
+async def _wait_for_newsnow():
+    base_url = NEWSNOW_API_URL.rstrip("/s")
+    logger.info("Checking NewsNow availability at %s ...", base_url)
+    elapsed = 0
+    while elapsed < NEWSNOW_WAIT_TIMEOUT:
+        if await check_newsnow_health(base_url):
+            logger.info("NewsNow is ready (%.1fs)", elapsed)
+            return
+        logger.debug("NewsNow not ready, waiting %.1fs ...", NEWSNOW_WAIT_INTERVAL)
+        await asyncio.sleep(NEWSNOW_WAIT_INTERVAL)
+        elapsed += NEWSNOW_WAIT_INTERVAL
+    logger.warning(
+        "NewsNow not ready after %ds, will use fallback: %s",
+        NEWSNOW_WAIT_TIMEOUT, FALLBACK_API_URL,
+    )
+
+
 async def lifespan(app: FastAPI):
     import routers.deps as _d
+
+    await _wait_for_newsnow()
 
     await init_db()
 

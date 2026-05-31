@@ -17,6 +17,7 @@ from config import (
     NEWS_SOURCES,
     PUBLISH_PLATFORMS,
     KEYWORDS_FILE,
+    KEYWORDS_FILTER_ENABLED,
     SCHEDULE_ENABLED,
     NEWSNOW_CRAWL_INTERVAL,
     RSS_CRAWL_INTERVAL,
@@ -92,7 +93,7 @@ PUBLISHERS: dict[str, Any] = {
 
 # ── Keyword filter ────────────────────────────────────────────────────
 
-kw_filter = KeywordFilter(KEYWORDS_FILE)
+kw_filter = KeywordFilter(KEYWORDS_FILE if KEYWORDS_FILTER_ENABLED else None)
 
 # ── SSE headers ───────────────────────────────────────────────────────
 

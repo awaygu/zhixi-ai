@@ -1,5 +1,20 @@
 <template>
   <div class="kb-chat-panel">
+    <div class="chat-topbar">
+      <el-popconfirm
+        title="确定清空当前会话记录？"
+        confirm-button-text="清空"
+        cancel-button-text="取消"
+        @confirm="$emit('clear-conv')"
+      >
+        <template #reference>
+          <button class="clear-conv-btn" title="清空会话">
+            <el-icon><Delete /></el-icon>
+            <span>清空会话</span>
+          </button>
+        </template>
+      </el-popconfirm>
+    </div>
     <div class="chat-body" ref="messagesRef">
       <div
         v-for="(msg, i) in messages"
@@ -66,12 +81,14 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Delete } from '@element-plus/icons-vue'
 import { useNewsStore } from '@/stores'
 import { kbStreamChat, kbStreamGenerate } from '@/api'
 import type { StyleType, KBSource, KBMessage } from '@/types'
 import { marked } from 'marked'
 
 const props = defineProps<{ kbId: string }>()
+defineEmits<{ 'clear-conv': [] }>()
 const store = useNewsStore()
 
 interface ChatMessage {
@@ -178,7 +195,7 @@ async function sendChat() {
   scrollToBottom()
 
   const convId = store.currentConvId
-  const docIds = store.kbDocuments.map(d => d.doc_id)
+  const docIds = store.kbSelectedDocIds
 
   if (convId) {
     await store.saveConvMessage(convId, 'user', msg, 'chat')
@@ -221,7 +238,7 @@ function generateArticle(style: StyleType) {
   scrollToBottom()
 
   const convId = store.currentConvId
-  const docIds = store.kbDocuments.map(d => d.doc_id)
+  const docIds = store.kbSelectedDocIds
 
   kbStreamGenerate(props.kbId, topic, style, {
     onChunk(text) {
@@ -279,6 +296,33 @@ defineExpose({ generateArticle, loadHistory, clearMessages })
   flex-direction: column;
   overflow: hidden;
   background: #fafbfc;
+}
+
+.chat-topbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 16px;
+  flex-shrink: 0;
+}
+
+.clear-conv-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  color: #94a3b8;
+  transition: all 0.15s;
+}
+
+.clear-conv-btn:hover {
+  border-color: #fca5a5;
+  color: #ef4444;
+  background: #fef2f2;
 }
 
 .chat-body {
@@ -425,7 +469,7 @@ defineExpose({ generateArticle, loadHistory, clearMessages })
 }
 
 .msg-bubble {
-  padding: 10px 14px;
+  padding: 12px 18px;
   border-radius: 12px;
   background: #fff;
   border: 1px solid #eef0f5;
@@ -434,21 +478,51 @@ defineExpose({ generateArticle, loadHistory, clearMessages })
   word-break: break-word;
 }
 
-.msg-row.user .msg-bubble {
-  background: linear-gradient(135deg, #818cf8, #6366f1);
-  color: #fff;
-  border: none;
-  border-top-left-radius: 4px;
-}
-
-.msg-row.assistant .msg-bubble {
-  border-top-right-radius: 4px;
-}
-
 .msg-bubble :deep(p) { margin: 4px 0; }
 .msg-bubble :deep(p:first-child) { margin-top: 0; }
 .msg-bubble :deep(p:last-child) { margin-bottom: 0; }
 .msg-bubble :deep(strong) { font-weight: 600; }
+.msg-bubble :deep(ol),
+.msg-bubble :deep(ul) {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+.msg-bubble :deep(li) {
+  margin: 3px 0;
+  line-height: 1.7;
+}
+.msg-bubble :deep(h1),
+.msg-bubble :deep(h2),
+.msg-bubble :deep(h3),
+.msg-bubble :deep(h4) {
+  margin: 10px 0 6px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.msg-bubble :deep(h1) { font-size: 18px; }
+.msg-bubble :deep(h2) { font-size: 16px; }
+.msg-bubble :deep(h3) { font-size: 15px; }
+.msg-bubble :deep(h4) { font-size: 14px; }
+.msg-bubble :deep(hr) {
+  border: none;
+  border-top: 1px solid #eef0f5;
+  margin: 10px 0;
+}
+.msg-bubble :deep(table) {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+}
+.msg-bubble :deep(th),
+.msg-bubble :deep(td) {
+  border: 1px solid #e2e8f0;
+  padding: 6px 10px;
+  text-align: left;
+}
+.msg-bubble :deep(th) {
+  background: #f5f6fa;
+  font-weight: 600;
+}
 .msg-bubble :deep(code) {
   background: rgba(99, 102, 241, 0.08);
   padding: 1px 5px;

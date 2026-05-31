@@ -50,6 +50,14 @@
       </div>
 
       <!-- Article content -->
+      <div v-else-if="articleContent" class="detail-article">
+        <div class="article-body" v-html="articleContent"></div>
+        <div class="article-footer">
+          <el-button size="small" @click="openOriginal">
+            <el-icon><Link /></el-icon> 查看原文
+          </el-button>
+        </div>
+      </div>
       <div v-else-if="news.url" class="detail-iframe-wrap">
         <div v-if="isJsRendered" class="js-rendered-hint">
           <el-icon><Warning /></el-icon>
@@ -77,12 +85,37 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useNewsStore } from '@/stores'
 import { SOURCE_LABELS, VIDEO_SOURCES, JS_RENDERED_SOURCES } from '@/types'
+import { fetchNewsContent } from '@/api'
 
 const store = useNewsStore()
 const news = computed(() => store.currentDetailNews)
+
+const fetchedContent = ref('')
+const fetchingContent = ref(false)
+
+watch(news, async (n) => {
+  fetchedContent.value = ''
+  if (!n) return
+  const content = n.content || ''
+  const summary = n.summary || ''
+  if (content && content !== summary && !content.startsWith(summary.slice(0, 50))) {
+    fetchedContent.value = content
+    return
+  }
+  if (n.news_id && !fetchingContent.value) {
+    fetchingContent.value = true
+    try {
+      const res = await fetchNewsContent(n.news_id)
+      if (res.content && res.content !== summary && !res.content.startsWith(summary.slice(0, 50))) {
+        fetchedContent.value = res.content
+      }
+    } catch { /* ignore */ }
+    fetchingContent.value = false
+  }
+}, { immediate: true })
 
 const isVideo = computed(() => {
   if (!news.value) return false
@@ -106,6 +139,14 @@ const videoContent = computed(() => {
     return content
   }
   return ''
+})
+
+const articleContent = computed(() => {
+  if (isVideo.value) return ''
+  const text = fetchedContent.value
+  if (!text) return ''
+  const paragraphs = text.split(/\n{2,}/).filter(p => p.trim())
+  return paragraphs.map(p => `<p>${p.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`).join('')
 })
 
 const isSelected = computed(() =>
@@ -259,6 +300,34 @@ function formatTime(iso: string): string {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.detail-article {
+  flex: 1;
+  margin-top: 12px;
+  padding: 16px 20px;
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow-y: auto;
+}
+
+.article-body {
+  line-height: 1.8;
+  font-size: 15px;
+  color: #303133;
+}
+
+.article-body p {
+  margin: 0 0 12px;
+  text-indent: 2em;
+}
+
+.article-footer {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #ebeef5;
+  text-align: right;
 }
 
 .js-rendered-hint {

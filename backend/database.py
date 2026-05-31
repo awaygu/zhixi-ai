@@ -58,7 +58,8 @@ async def init_db() -> None:
                 chunk_count INTEGER DEFAULT 0,
                 file_size INTEGER DEFAULT 0,
                 upload_time TEXT DEFAULT (datetime('now')),
-                status TEXT DEFAULT 'ready'
+                status TEXT DEFAULT 'ready',
+                summary TEXT DEFAULT ''
             )
         """)
         await db.execute("""
@@ -77,6 +78,10 @@ async def init_db() -> None:
             pass
         try:
             await db.execute("ALTER TABLE kb_documents ADD COLUMN kb_id TEXT NOT NULL DEFAULT 'default'")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE kb_documents ADD COLUMN summary TEXT DEFAULT ''")
         except Exception:
             pass
         await db.execute("""
@@ -273,8 +278,8 @@ async def save_kb_doc(doc: dict[str, Any]) -> None:
         await db.execute(
             """
             INSERT OR REPLACE INTO kb_documents
-                (doc_id, filename, file_type, chunk_count, file_size, upload_time, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (doc_id, filename, file_type, chunk_count, file_size, upload_time, status, summary)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 doc["doc_id"],
@@ -284,25 +289,41 @@ async def save_kb_doc(doc: dict[str, Any]) -> None:
                 doc.get("file_size", 0),
                 doc.get("upload_time", ""),
                 doc.get("status", "ready"),
+                doc.get("summary", ""),
             ),
         )
         await db.commit()
 
 
-async def load_kb_docs() -> list[dict[str, Any]]:
+async def rename_kb_doc(doc_id: str, filename: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT doc_id FROM kb_documents WHERE doc_id = ?", (doc_id,))
+        if not await cursor.fetchone():
+            return False
+        await db.execute("UPDATE kb_documents SET filename = ? WHERE doc_id = ?", (filename, doc_id))
+        await db.commit()
+    return True
+
+
+async def load_kb_docs(kb_id: str = "") -> list[dict[str, Any]]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM kb_documents ORDER BY upload_time DESC")
+        if kb_id:
+            cursor = await db.execute("SELECT * FROM kb_documents WHERE kb_id = ? ORDER BY upload_time DESC", (kb_id,))
+        else:
+            cursor = await db.execute("SELECT * FROM kb_documents ORDER BY upload_time DESC")
         rows = await cursor.fetchall()
         return [
             {
                 "doc_id": row["doc_id"],
+                "kb_id": row["kb_id"] if "kb_id" in row.keys() else "",
                 "filename": row["filename"],
                 "file_type": row["file_type"],
                 "chunk_count": row["chunk_count"],
                 "file_size": row["file_size"],
                 "upload_time": row["upload_time"],
                 "status": row["status"],
+                "summary": row["summary"] if "summary" in row.keys() else "",
             }
             for row in rows
         ]
@@ -406,6 +427,23 @@ async def load_kb(kb_id: str) -> dict[str, Any] | None:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+
+async def update_kb(kb_id: str, name: str | None = None, description: str | None = None) -> dict[str, Any] | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT name, description FROM knowledge_bases WHERE kb_id = ?", (kb_id,))
+        existing = await cursor.fetchone()
+        if not existing:
+            return None
+        new_name = name if name is not None else existing["name"]
+        new_desc = description if description is not None else existing["description"]
+        await db.execute(
+            "UPDATE knowledge_bases SET name = ?, description = ?, updated_at = datetime('now') WHERE kb_id = ?",
+            (new_name, new_desc, kb_id),
+        )
+        await db.commit()
+    return {"kb_id": kb_id, "name": new_name, "description": new_desc}
 
 
 async def delete_kb(kb_id: str) -> None:

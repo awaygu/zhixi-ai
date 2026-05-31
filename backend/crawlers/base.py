@@ -1,10 +1,14 @@
 """Base crawler class."""
 
+from __future__ import annotations
+
+import asyncio
+import json
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
-import httpx
+import requests
 
 
 class NewsItem:
@@ -66,20 +70,22 @@ class BaseCrawler(ABC):
         ...
 
     async def _fetch(self, url: str, headers: dict | None = None) -> str:
-        """Helper: fetch HTML/text from a URL."""
+        """Helper: fetch HTML/text from a URL (sync requests in thread)."""
         h = headers or {"User-Agent": self._user_agent()}
         if "User-Agent" not in h:
             h["User-Agent"] = self._user_agent()
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(url, headers=h)
-            resp.raise_for_status()
-            return resp.text
+        return await asyncio.to_thread(self._sync_fetch, url, h)
 
     async def _fetch_json(self, url: str, headers: dict | None = None) -> dict:
         """Helper: fetch JSON from a URL."""
-        import json
         text = await self._fetch(url, headers=headers)
         return json.loads(text)
+
+    @staticmethod
+    def _sync_fetch(url: str, headers: dict) -> str:
+        resp = requests.get(url, headers=headers, timeout=15.0, allow_redirects=True)
+        resp.raise_for_status()
+        return resp.text
 
     @staticmethod
     def _user_agent() -> str:

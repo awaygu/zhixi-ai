@@ -378,6 +378,11 @@ export async function deleteKnowledgeBase(kbId: string): Promise<void> {
   await api.delete(`/knowledge/bases/${encodeURIComponent(kbId)}`)
 }
 
+export async function updateKnowledgeBase(kbId: string, data: { name?: string; description?: string }): Promise<KnowledgeBase> {
+  const res = await api.patch(`/knowledge/bases/${encodeURIComponent(kbId)}`, data)
+  return res.data
+}
+
 /** Upload a document to a knowledge base. */
 export async function uploadDocument(kbId: string, file: File): Promise<{ doc_id: string; filename: string; chunk_count: number; file_size: number }> {
   const formData = new FormData()
@@ -398,6 +403,11 @@ export async function fetchKBDocuments(kbId: string): Promise<{ documents: KBDoc
 /** Delete a knowledge base document. */
 export async function deleteKBDocument(kbId: string, docId: string): Promise<{ deleted: boolean; doc_id: string; chunks_removed: number }> {
   const res = await api.delete(`/knowledge/bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}`, { timeout: 60000 })
+  return res.data
+}
+
+export async function renameKBDocument(kbId: string, docId: string, filename: string): Promise<{ doc_id: string; filename: string }> {
+  const res = await api.patch(`/knowledge/bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}`, { filename })
   return res.data
 }
 
@@ -440,5 +450,22 @@ export async function fetchKBMessages(kbId: string, convId: string): Promise<KBM
 
 export async function saveKBMessage(kbId: string, convId: string, role: string, content: string, type = 'chat', sources: any[] = []): Promise<{ msg_id: string }> {
   const res = await api.post(`/knowledge/bases/${encodeURIComponent(kbId)}/conversations/${encodeURIComponent(convId)}/messages`, { role, content, type, sources })
+  return res.data
+}
+
+// ── Keywords ──────────────────────────────────────────────────
+
+export interface KeywordGroup {
+  name: string
+  keywords: string[]
+}
+
+export async function fetchKeywordStatus(): Promise<{ enabled: boolean; groups: KeywordGroup[]; total_rules: number }> {
+  const res = await api.get('/keywords/status')
+  return res.data
+}
+
+export async function updateKeywordGroups(groups: KeywordGroup[]): Promise<{ enabled: boolean; total_rules: number; groups: KeywordGroup[] }> {
+  const res = await api.put('/keywords', { groups })
   return res.data
 }

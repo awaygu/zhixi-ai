@@ -1,4 +1,4 @@
-"""DashScope text-embedding-v1 client."""
+"""DashScope text-embedding-v4 client."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from config import DASHSCOPE_API_KEY
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = "text-embedding-v1"
+EMBEDDING_MODEL = "text-embedding-v4"
 EMBEDDING_DIM = 1536
 BATCH_SIZE = 25
 

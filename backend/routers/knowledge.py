@@ -17,10 +17,12 @@ from database import (
     create_kb,
     load_kbs,
     load_kb,
+    update_kb as db_update_kb,
     delete_kb as db_delete_kb,
     save_kb_doc,
     load_kb_docs,
     delete_kb_doc,
+    rename_kb_doc,
     save_kb_chunks,
     load_kb_chunk_texts,
     create_conversation,
@@ -32,7 +34,7 @@ from database import (
 from knowledge.embeddings import DashScopeEmbedding
 from knowledge.chunker import TextChunker
 from knowledge.vectorstore import VectorStoreManager
-from knowledge.loader import DocumentLoader
+from knowledge.loader import DocumentLoader, IMAGE_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
@@ -55,7 +57,8 @@ KB_RAG_SYSTEM_PROMPT = """\
 规则：
 - 严格基于知识库内容回答，不得编造知识库中未提及的信息
 - 引用知识库内容时，标注来源文件名
-- 如果知识库中没有相关信息，请明确说明"知识库中暂无相关信息"
+- 如果知识库中没有相关信息，请明确说明"知识库中暂无相关信息"，不要自行推测或编造答案
+- 如果检索到的内容与用户问题无关，也请说明"知识库中暂无相关信息"
 - 回复使用中文
 """
 
@@ -65,6 +68,7 @@ KB_GENERATE_SYSTEM_PROMPT = """\
 规则：
 - 严格基于知识库内容，不得编造数据
 - 引用数据标注来源文件
+- 如果知识库中没有相关内容，请明确说明"知识库中暂无相关内容，无法生成文章"，不要自行编造
 - 回复使用中文
 """
 
@@ -105,6 +109,21 @@ async def get_knowledge_base(kb_id: str):
     total_chunks = sum(d.get("chunk_count", 0) for d in docs)
     convs = await load_conversations(kb_id)
     return {**kb, "doc_count": len(docs), "total_chunks": total_chunks, "conversation_count": len(convs)}
+
+
+class UpdateKBRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+@router.patch("/bases/{kb_id}")
+async def update_knowledge_base(kb_id: str, req: UpdateKBRequest):
+    if req.name is None and req.description is None:
+        raise HTTPException(400, "At least one of name or description must be provided")
+    kb = await db_update_kb(kb_id, name=req.name, description=req.description)
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    return kb
 
 
 @router.delete("/bases/{kb_id}")
@@ -153,14 +172,35 @@ async def upload_document(kb_id: str, file: UploadFile = File(...)):
     save_path.write_bytes(content)
 
     try:
-        doc = loader.load(save_path, doc_id=doc_id)
+        import asyncio
+        loop = asyncio.get_event_loop()
+        doc = await loop.run_in_executor(None, loader.load, save_path, doc_id)
     except Exception as e:
+        logger.error("Document parse failed: %s", e, exc_info=True)
         save_path.unlink(missing_ok=True)
         raise HTTPException(500, f"Failed to parse document: {e}")
 
     if not doc.text.strip():
         save_path.unlink(missing_ok=True)
         raise HTTPException(400, "Document has no extractable text")
+
+    from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+    from openai import OpenAI as LLMClient
+
+    doc_summary = ""
+    try:
+        llm_client = LLMClient(api_key=LLM_API_KEY, base_url=LLM_BASE_URL, timeout=30.0, max_retries=2)
+        summary_text = doc.text[:3000]
+        summary_completion = llm_client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": "你是一个文档概要生成器。根据给出的文本内容，生成一段200字以内的中文概要，简洁概括文档的主要内容和关键信息。"},
+                {"role": "user", "content": summary_text},
+            ],
+        )
+        doc_summary = (summary_completion.choices[0].message.content or "").strip()
+    except Exception as e:
+        logger.warning("Summary generation failed for %s: %s", doc_id, e)
 
     chunks = chunker.chunk_with_pages(doc.pages, doc_id=doc_id)
     if not chunks:
@@ -193,18 +233,20 @@ async def upload_document(kb_id: str, file: UploadFile = File(...)):
     doc_record = {
         "doc_id": doc_id,
         "kb_id": kb_id,
-        "filename": file.filename,
+        "filename": f"{doc.generated_name}{ext}" if doc.generated_name else file.filename,
         "file_type": ext,
         "chunk_count": len(chunks),
         "file_size": len(content),
         "upload_time": "",
         "status": "ready",
+        "summary": doc_summary,
     }
     await save_kb_doc(doc_record)
 
+    final_filename = doc_record["filename"]
     return {
         "doc_id": doc_id,
-        "filename": file.filename,
+        "filename": final_filename,
         "chunk_count": len(chunks),
         "file_size": len(content),
     }
@@ -223,6 +265,35 @@ async def list_documents(kb_id: str):
 
 
 # ── Delete ──────────────────────────────────────────────────────
+
+@router.get("/bases/{kb_id}/documents/{doc_id}")
+async def get_document(kb_id: str, doc_id: str):
+    kb = await load_kb(kb_id)
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    docs = await load_kb_docs(kb_id)
+    for d in docs:
+        if d["doc_id"] == doc_id:
+            return d
+    raise HTTPException(404, "Document not found")
+
+
+class RenameDocRequest(BaseModel):
+    filename: str
+
+
+@router.patch("/bases/{kb_id}/documents/{doc_id}")
+async def rename_document(kb_id: str, doc_id: str, req: RenameDocRequest):
+    kb = await load_kb(kb_id)
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    if not req.filename.strip():
+        raise HTTPException(400, "Filename cannot be empty")
+    ok = await rename_kb_doc(doc_id, req.filename.strip())
+    if not ok:
+        raise HTTPException(404, "Document not found")
+    return {"doc_id": doc_id, "filename": req.filename.strip()}
+
 
 @router.delete("/bases/{kb_id}/documents/{doc_id}")
 async def delete_document(kb_id: str, doc_id: str):
@@ -382,16 +453,23 @@ async def kb_chat_stream(kb_id: str, req: KBChatRequest):
     except Exception as e:
         raise HTTPException(500, f"Embedding failed: {e}")
 
-    hits = vector_store.search(query_vec, top_k=req.top_k)
+    hits = vector_store.search(query_vec, top_k=10)
     chunk_ids = [cid for cid, _ in hits]
+    score_map = {cid: score for cid, score in hits}
+
+    selected_doc_set = set(req.doc_ids) if req.doc_ids else None
     chunk_data = await load_kb_chunk_texts(chunk_ids)
 
+    if selected_doc_set:
+        chunk_data = {cid: cd for cid, cd in chunk_data.items() if cd.get("doc_id") in selected_doc_set}
+
+    filtered_hits = [(cid, score_map[cid]) for cid in chunk_ids if cid in chunk_data]
+
     context_parts = []
-    for cid in chunk_ids:
-        if cid in chunk_data:
-            cd = chunk_data[cid]
-            page_info = f", 第{cd['page']}页" if cd.get("page", 0) > 0 else ""
-            context_parts.append(f"[来源: {cd['filename']}{page_info}]\n{cd['text']}")
+    for cid, _ in filtered_hits:
+        cd = chunk_data[cid]
+        page_info = f", 第{cd['page']}页" if cd.get("page", 0) > 0 else ""
+        context_parts.append(f"[来源: {cd['filename']}{page_info}]\n{cd['text']}")
 
     context_text = "\n\n".join(context_parts) if context_parts else "（未检索到相关内容）"
 
@@ -414,7 +492,7 @@ async def kb_chat_stream(kb_id: str, req: KBChatRequest):
         yield f"data: {json.dumps({'type': 'prompt', 'content': prompt_text}, ensure_ascii=False)}\n\n"
 
         sources = [{"filename": chunk_data[cid]["filename"], "page": chunk_data[cid].get("page", 0), "score": round(score, 4), "text": chunk_data[cid]["text"], "preview": chunk_data[cid]["text"][:80] + ("..." if len(chunk_data[cid]["text"]) > 80 else "")}
-                   for cid, score in hits if cid in chunk_data]
+                   for cid, score in filtered_hits]
         if sources:
             yield f"data: {json.dumps({'type': 'sources', 'sources': sources}, ensure_ascii=False)}\n\n"
 
@@ -479,16 +557,23 @@ async def kb_generate_stream(kb_id: str, req: KBGenerateRequest):
     except Exception as e:
         raise HTTPException(500, f"Embedding failed: {e}")
 
-    hits = vector_store.search(query_vec, top_k=req.top_k)
+    hits = vector_store.search(query_vec, top_k=10)
     chunk_ids = [cid for cid, _ in hits]
+    score_map = {cid: score for cid, score in hits}
+
+    selected_doc_set = set(req.doc_ids) if req.doc_ids else None
     chunk_data = await load_kb_chunk_texts(chunk_ids)
 
+    if selected_doc_set:
+        chunk_data = {cid: cd for cid, cd in chunk_data.items() if cd.get("doc_id") in selected_doc_set}
+
+    filtered_hits = [(cid, score_map[cid]) for cid in chunk_ids if cid in chunk_data]
+
     context_parts = []
-    for cid in chunk_ids:
-        if cid in chunk_data:
-            cd = chunk_data[cid]
-            page_info = f", 第{cd['page']}页" if cd.get("page", 0) > 0 else ""
-            context_parts.append(f"[来源: {cd['filename']}{page_info}]\n{cd['text']}")
+    for cid, _ in filtered_hits:
+        cd = chunk_data[cid]
+        page_info = f", 第{cd['page']}页" if cd.get("page", 0) > 0 else ""
+        context_parts.append(f"[来源: {cd['filename']}{page_info}]\n{cd['text']}")
 
     context_text = "\n\n".join(context_parts) if context_parts else "（未检索到相关内容）"
 
@@ -523,7 +608,7 @@ async def kb_generate_stream(kb_id: str, req: KBGenerateRequest):
         yield f"data: {json.dumps({'type': 'prompt', 'content': prompt_text}, ensure_ascii=False)}\n\n"
 
         sources = [{"filename": chunk_data[cid]["filename"], "page": chunk_data[cid].get("page", 0), "score": round(score, 4), "text": chunk_data[cid]["text"], "preview": chunk_data[cid]["text"][:80] + ("..." if len(chunk_data[cid]["text"]) > 80 else "")}
-                   for cid, score in hits if cid in chunk_data]
+                   for cid, score in filtered_hits]
         if sources:
             yield f"data: {json.dumps({'type': 'sources', 'sources': sources}, ensure_ascii=False)}\n\n"
 

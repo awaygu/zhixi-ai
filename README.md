@@ -24,8 +24,9 @@
 
 ```
 zhixi/
+├── docker-compose.newsnow.yml  # NewsNow Docker 中台服务配置
 ├── backend/                    # FastAPI 后端服务
-│   ├── app.py                 # 主入口 + 应用配置
+│   ├── app.py                 # 主入口 + 应用配置 + NewsNow 健康检查
 │   ├── config.py              # 全局配置管理
 │   ├── database.py            # SQLite 数据库操作（8张表）
 │   ├── prompts.py             # AI 提示词管理
@@ -36,8 +37,8 @@ zhixi/
 │   │   ├── interpreter.py     # 新闻解读器
 │   │   └── style_manager.py   # 风格管理器
 │   ├── crawlers/              # 新闻爬虫模块
-│   │   ├── base.py            # 爬虫基类
-│   │   ├── newsnow.py         # NewsNow 统一爬虫（9平台）
+│   │   ├── base.py            # 爬虫基类（requests + asyncio.to_thread）
+│   │   ├── newsnow.py         # NewsNow 统一爬虫（9平台，含 fallback）
 │   │   ├── rss.py             # RSS/Atom 爬虫
 │   │   └── filter.py          # 内容过滤器
 │   ├── knowledge/             # 知识库模块
@@ -51,7 +52,7 @@ zhixi/
 │   │   └── douyin_pub.py      # 抖音发布器
 │   └── routers/               # API 路由
 │       ├── deps.py            # 依赖注入 + 共享状态
-│       ├── news.py            # 新闻接口
+│       ├── news.py            # 新闻接口（含后台刷新）
 │       ├── interpret.py       # AI 解读接口
 │       ├── knowledge.py       # 知识库 CRUD + RAG 接口
 │       ├── agent.py           # 智能体（8工具函数调用）
@@ -65,7 +66,7 @@ zhixi/
 │   │   ├── main.ts            # 入口文件
 │   │   ├── api/index.ts       # API 请求 + SSE 流式消费
 │   │   ├── router/index.ts    # 路由配置
-│   │   ├── stores/index.ts    # Pinia 状态管理
+│   │   ├── stores/index.ts    # Pinia 状态管理（非阻塞刷新）
 │   │   ├── types/index.ts     # TypeScript 类型定义
 │   │   ├── views/             # 页面
 │   │   │   ├── HomeView.vue           # 首页（知识库列表）
@@ -73,7 +74,7 @@ zhixi/
 │   │   │   └── KnowledgeBaseView.vue  # 知识库详情
 │   │   └── components/        # 组件
 │   │       ├── NewsList.vue           # 新闻列表
-│   │       ├── NewsDetail.vue         # 新闻详情
+│   │       ├── NewsDetail.vue         # 新闻详情（正文展示 / iframe）
 │   │       ├── FloatingAgent.vue      # 智能体浮窗
 │   │       ├── KBFilePanel.vue        # 知识库文件管理
 │   │       ├── KBChatPanel.vue        # 知识库 RAG 对话
@@ -106,6 +107,7 @@ zhixi/
 
 - **Python**: >= 3.10
 - **Node.js**: >= 18.0
+- **Docker**: >= 20.10（用于 NewsNow 中台服务，可选）
 
 ### 1. 克隆项目
 
@@ -114,7 +116,21 @@ git clone <repository-url>
 cd news-interpretation
 ```
 
-### 2. 后端启动
+### 2. 启动 NewsNow 中台（推荐）
+
+NewsNow 提供本地新闻聚合 API，作为后端爬虫层的数据源。Docker 部署后端自动连接，无需公网依赖。
+
+```bash
+# 启动 NewsNow 容器（端口 4444，256M 内存限制）
+docker compose -f docker-compose.newsnow.yml up -d
+
+# 验证服务
+curl http://localhost:4444/api/s?id=weibo
+```
+
+> 若不启动 Docker，爬虫会自动 fallback 到公共实例 `https://newsnow.busiyi.world/api/s`。
+
+### 3. 后端启动
 
 ```bash
 cd backend
@@ -132,14 +148,15 @@ pip install -r requirements.txt
 # 配置环境变量
 cp .env.example .env
 # 编辑 .env 配置 LLM_API_KEY、DASHSCOPE_API_KEY 等
+# NEWSNOW_API_URL 默认 http://localhost:4444/api/s（本地 Docker）
 
-# 启动服务
+# 启动服务（自动等待 NewsNow 就绪，最多10秒）
 python app.py
 ```
 
 后端运行在 **http://localhost:8000**，API 文档: http://localhost:8000/docs
 
-### 3. 前端启动
+### 4. 前端启动
 
 ```bash
 cd frontend
@@ -173,10 +190,27 @@ HOST=0.0.0.0
 PORT=8000
 
 # 爬虫配置
+NEWSNOW_API_URL=http://localhost:4444/api/s   # 本地 Docker（推荐）
+# NEWSNOW_API_URL=https://newsnow.busiyi.world/api/s  # 公共实例（fallback）
 NEWSNOW_CRAWL_INTERVAL=3600
 RSS_CRAWL_INTERVAL=1800
 SCHEDULE_ENABLED=true
+
+# 文章内容抓取
+JINA_READER_URL=https://r.jina.ai
 ```
+
+### NewsNow Docker 配置
+
+`docker-compose.newsnow.yml` 关键配置：
+
+| 配置项 | 值 | 说明 |
+|--------|-----|------|
+| 镜像 | `ghcr.io/ourongxing/newsnow:latest` | 官方镜像 |
+| 端口 | `4444` | 宿主机映射端口 |
+| 内存限制 | `256M` | 容器内存上限 |
+| 重启策略 | `unless-stopped` | 自动重启 |
+| 数据持久化 | `./newsnow-data:/app/data` | SQLite 缓存不丢失 |
 
 ---
 
@@ -215,12 +249,22 @@ SCHEDULE_ENABLED=true
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/news` | 获取新闻列表 |
-| POST | `/api/news/refresh` | 刷新全部新闻 |
+| GET | `/api/news` | 获取新闻列表（分页 + 按源筛选） |
+| POST | `/api/news/refresh` | 刷新全部新闻（同步） |
+| POST | `/api/news/refresh/{source}` | 刷新单源新闻（后台异步，立即返回） |
+| GET | `/api/news/{news_id}/content` | 获取新闻正文（后端抓取 + Jina Reader） |
 | POST | `/api/interpret/stream` | AI 解读（SSE） |
 | POST | `/api/chat/stream` | 对话式解读（SSE） |
 | POST | `/api/generate_article/stream` | 文章生成（SSE） |
 | POST | `/api/agent/chat/stream` | 智能体对话（SSE） |
+
+### NewsNow 平台
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/newsnow/platforms` | 获取可用平台列表 |
+| POST | `/api/newsnow/refresh` | 刷新全部平台（同步） |
+| POST | `/api/newsnow/refresh/{platform_id}` | 刷新单平台（后台异步） |
 
 ---
 
@@ -236,19 +280,49 @@ SCHEDULE_ENABLED=true
 
 ## 📁 新闻来源
 
+### NewsNow 平台（通过 Docker 中台聚合）
+
+| 来源 | 标识符 | 别名 |
+|------|--------|------|
+| 财联社热门 | `cls-hot` | `cls_hot` |
+| 财联社电报 | `cls-telegraph` | `cls_telegraph` |
+| 华尔街见闻 | `wallstreetcn-hot` | `wallstreet` |
+| 参考消息 | `cankaoxiaoxi` | `cankao` |
+| 澎湃新闻 | `thepaper` | `pengpai` |
+| 今日头条 | `toutiao` | `toutiao` |
+| 雪球 | `xueqiu` | `xueqiu` |
+| 微博 | `weibo` | `weibo` |
+| 抖音 | `douyin` | `douyin`（视频） |
+
+### RSS 源
+
 | 来源 | 标识符 |
 |------|--------|
-| 财联社热门 | `cls-hot` |
-| 财联社电报 | `cls-telegraph` |
-| 华尔街见闻 | `wallstreetcn-hot` |
-| 参考消息 | `cankaoxiaoxi` |
-| 澎湃新闻 | `thepaper` |
-| 今日头条 | `toutiao` |
-| 雪球 | `xueqiu` |
-| 微博 | `weibo` |
-| 抖音 | `douyin` |
 | Hacker News | `hacker-news` |
 | 阮一峰的网络日志 | `ruanyifeng` |
+
+### 爬虫架构
+
+```
+前端 loadNews() ──fire-and-forget──▶ POST /api/news/refresh/{source}
+        │                                      │
+        │                              asyncio.create_task()
+        │                              (_bg_crawl_and_save)
+        │                                      │
+        ├──等待2s──▶ GET /api/news          ┌───┴───┐
+        │                              本地 Docker   公共实例
+        │                              :4444/api/s  (fallback)
+        │                                  │
+        │                              NewsNow 响应
+        │                                  │
+        └──────── 解析 + 去重 + 入库 ◀─────┘
+```
+
+**关键设计：**
+- 单源刷新为后台异步任务，API 立即返回 `{"status": "refreshing"}`，前端不阻塞
+- 主 API 失败自动 fallback 到公共实例
+- 爬虫层使用 `requests`（httpx 与 NewsNow Nitro 服务器不兼容）
+- 双层缓存：NewsNow SQLite（最新快照）+ 后端 SQLite（历史持久化）
 
 ---
 
@@ -268,6 +342,15 @@ SCHEDULE_ENABLED=true
 ---
 
 ## 📝 更新日志
+
+### v2.1.0
+- NewsNow Docker 中台：本地部署替代公网 API，端口 4444
+- 爬虫层 httpx → requests：解决与 Nitro 服务器 502 兼容性问题
+- 自动 fallback：主 API 失败自动切换到公共实例
+- 单源刷新非阻塞：`POST /api/news/refresh/{source}` 后台异步执行
+- 正文内容展示：优先后端抓取正文，纯文本渲染替代 iframe（避免 sandbox 报错）
+- JS 渲染源标记：`toutiao`、`cankaoxiaoxi` 标记为动态加载，提示新窗口打开
+- 后端启动健康检查：自动等待 NewsNow 就绪（最多 10 秒）
 
 ### v2.0.0
 - 多知识库支持：独立创建、独立向量索引、独立会话

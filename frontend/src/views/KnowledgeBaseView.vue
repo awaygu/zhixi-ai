@@ -1,47 +1,69 @@
 <template>
   <div class="kb-container">
     <div class="kb-header">
-      <div class="header-left">
-        <el-button text @click="$router.push('/')" class="back-btn">
-          <el-icon><ArrowLeft /></el-icon> 首页
-        </el-button>
-        <div class="header-title">
-          <span class="title-icon">📚</span>
-          <span class="title-text">{{ store.currentKB?.name || '知识库' }}</span>
-        </div>
-      </div>
-      <div class="header-right">
-        <el-popconfirm
-          title="确定清空当前会话记录？"
-          confirm-button-text="清空"
-          cancel-button-text="取消"
-          @confirm="onClearConv"
-        >
-          <template #reference>
-            <button class="header-action-btn" title="清空会话">
-              <el-icon><Delete /></el-icon>
-              <span>清空会话</span>
-            </button>
-          </template>
-        </el-popconfirm>
-        <button class="toggle-sidebar-btn" :class="{ active: showSidebar }" @click="showSidebar = !showSidebar">
-          <el-icon><FolderOpened /></el-icon>
-        </button>
+      <el-button text @click="$router.push('/')" class="back-btn">
+        <el-icon><ArrowLeft /></el-icon> 首页
+      </el-button>
+      <div class="header-info" v-if="store.currentKB">
+        <span class="title-icon">{{ getKbIcon(store.currentKB.name, store.currentKB.description) }}</span>
+        <template v-if="editingTitle">
+          <el-input
+            ref="titleInputRef"
+            v-model="editName"
+            size="small"
+            class="title-input"
+            @blur="onSaveTitle"
+            @keyup.enter="onSaveTitle"
+            @keyup.escape="editingTitle = false"
+          />
+        </template>
+        <template v-else>
+          <span class="title-text" @dblclick="startEditTitle">{{ store.currentKB.name }}</span>
+          <el-icon class="edit-hint" @click="startEditTitle"><Edit /></el-icon>
+        </template>
+        <span v-if="!editingTitle" class="header-sep">·</span>
+        <template v-if="editingDesc">
+          <el-input
+            ref="descInputRef"
+            v-model="editDesc"
+            size="small"
+            class="desc-input"
+            @blur="onSaveDesc"
+            @keyup.enter="onSaveDesc"
+            @keyup.escape="editingDesc = false"
+          />
+        </template>
+        <template v-else>
+          <span class="desc-text" @dblclick="startEditDesc">{{ store.currentKB.description || '添加描述' }}</span>
+          <el-icon class="edit-hint" @click="startEditDesc"><Edit /></el-icon>
+        </template>
       </div>
     </div>
 
     <div class="kb-body">
       <transition name="slide">
-        <div v-if="showSidebar" class="kb-sidebar">
-          <KBFilePanel :kb-id="kbId" />
+        <div v-if="showSidebar" class="kb-sidebar" :style="{ width: sidebarWidth + 'px' }">
+          <KBFilePanel :kb-id="kbId" @collapse="showSidebar = false" />
         </div>
       </transition>
+      <div
+        v-if="showSidebar"
+        class="resize-handle resize-handle-left"
+        @mousedown="startResize('left', $event)"
+      ></div>
 
       <div class="kb-main">
-        <KBChatPanel ref="chatPanelRef" :kb-id="kbId" />
+        <button v-if="!showSidebar" class="expand-sidebar-btn" @click="showSidebar = true" title="展开文件管理">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 5L16 12L9 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <KBChatPanel ref="chatPanelRef" :kb-id="kbId" @clear-conv="onClearConv" />
       </div>
 
-      <div class="kb-actions">
+      <div
+        class="resize-handle resize-handle-right"
+        @mousedown="startResize('right', $event)"
+      ></div>
+      <div class="kb-actions" :style="{ width: actionsWidth + 'px' }">
         <KBActionPanel :kb-id="kbId" @generate="onGenerate" />
       </div>
     </div>
@@ -49,19 +71,117 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch, nextTick, onUnmounted } from 'vue'
 import KBFilePanel from '@/components/KBFilePanel.vue'
 import KBChatPanel from '@/components/KBChatPanel.vue'
 import KBActionPanel from '@/components/KBActionPanel.vue'
 import { useNewsStore } from '@/stores'
 import type { StyleType } from '@/types'
-import { FolderOpened, Delete } from '@element-plus/icons-vue'
+import { getKbIcon } from '@/types'
 import { ElMessage } from 'element-plus'
+import { Edit } from '@element-plus/icons-vue'
 
 const props = defineProps<{ kbId: string }>()
 const store = useNewsStore()
 const chatPanelRef = ref<InstanceType<typeof KBChatPanel> | null>(null)
 const showSidebar = ref(true)
+
+const sidebarWidth = ref(320)
+const actionsWidth = ref(280)
+const resizing = ref<'left' | 'right' | null>(null)
+const resizeStartX = ref(0)
+const resizeStartWidth = ref(0)
+
+function startResize(side: 'left' | 'right', e: MouseEvent) {
+  e.preventDefault()
+  resizing.value = side
+  resizeStartX.value = e.clientX
+  resizeStartWidth.value = side === 'left' ? sidebarWidth.value : actionsWidth.value
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
+function onMouseMove(e: MouseEvent) {
+  if (!resizing.value) return
+  const dx = e.clientX - resizeStartX.value
+  if (resizing.value === 'left') {
+    sidebarWidth.value = Math.max(200, Math.min(600, resizeStartWidth.value + dx))
+  } else {
+    actionsWidth.value = Math.max(180, Math.min(500, resizeStartWidth.value - dx))
+  }
+}
+
+function onMouseUp() {
+  if (!resizing.value) return
+  resizing.value = null
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
+
+onMounted(() => {
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('mousemove', onMouseMove)
+  window.removeEventListener('mouseup', onMouseUp)
+})
+
+const editingTitle = ref(false)
+const editingDesc = ref(false)
+const editName = ref('')
+const editDesc = ref('')
+const titleInputRef = ref<InstanceType<typeof ElInput> | null>(null)
+const descInputRef = ref<InstanceType<typeof ElInput> | null>(null)
+
+function startEditTitle() {
+  editName.value = store.currentKB?.name || ''
+  editingTitle.value = true
+  nextTick(() => titleInputRef.value?.focus())
+}
+
+async function onSaveTitle() {
+  const name = editName.value.trim()
+  if (!name) {
+    editingTitle.value = false
+    return
+  }
+  if (name === store.currentKB?.name) {
+    editingTitle.value = false
+    return
+  }
+  try {
+    await store.updateKB(props.kbId, { name })
+    ElMessage.success('标题已更新')
+  } catch (e: any) {
+    ElMessage.error(`更新失败：${e.message || '未知错误'}`)
+  } finally {
+    editingTitle.value = false
+  }
+}
+
+function startEditDesc() {
+  editDesc.value = store.currentKB?.description || ''
+  editingDesc.value = true
+  nextTick(() => descInputRef.value?.focus())
+}
+
+async function onSaveDesc() {
+  const desc = editDesc.value.trim()
+  if (desc === (store.currentKB?.description || '')) {
+    editingDesc.value = false
+    return
+  }
+  try {
+    await store.updateKB(props.kbId, { description: desc })
+    ElMessage.success('描述已更新')
+  } catch (e: any) {
+    ElMessage.error(`更新失败：${e.message || '未知错误'}`)
+  } finally {
+    editingDesc.value = false
+  }
+}
 
 function onGenerate(style: StyleType) {
   chatPanelRef.value?.generateArticle(style)
@@ -119,18 +239,12 @@ watch(() => props.kbId, (newId) => {
 .kb-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   background: #fff;
   border-bottom: 1px solid #eef0f5;
   padding: 0 16px;
   height: 52px;
   flex-shrink: 0;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .back-btn {
@@ -138,68 +252,68 @@ watch(() => props.kbId, (newId) => {
   color: #6366f1;
 }
 
-.header-title {
+.header-info {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: 4px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .title-icon {
-  font-size: 18px;
+  font-size: 20px;
+  flex-shrink: 0;
 }
 
 .title-text {
   font-size: 15px;
   font-weight: 600;
   color: #1e293b;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.header-action-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+.title-text:hover {
+  color: #4f46e5;
+}
+
+.title-input {
+  width: 180px;
+}
+
+.header-sep {
+  color: #cbd5e1;
   font-size: 13px;
-  color: #64748b;
-  transition: all 0.15s;
+  flex-shrink: 0;
 }
 
-.header-action-btn:hover {
-  border-color: #fca5a5;
-  color: #ef4444;
-  background: #fef2f2;
-}
-
-.toggle-sidebar-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.desc-text {
+  font-size: 13px;
   color: #94a3b8;
-  transition: all 0.2s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
 }
 
-.toggle-sidebar-btn:hover,
-.toggle-sidebar-btn.active {
-  border-color: #a5b4fc;
+.desc-text:hover {
+  color: #4f46e5;
+}
+
+.desc-input {
+  width: 240px;
+}
+
+.edit-hint {
+  font-size: 12px;
+  color: #c0c6d0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.edit-hint:hover {
   color: #6366f1;
-  background: #eef2ff;
 }
 
 .kb-body {
@@ -208,12 +322,54 @@ watch(() => props.kbId, (newId) => {
   overflow: hidden;
 }
 
+.expand-sidebar-btn {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 56px;
+  border: 1px solid #e2e8f0;
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  background: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  transition: all 0.2s;
+  z-index: 10;
+  box-shadow: 2px 0 8px rgba(0,0,0,0.04);
+}
+
+.expand-sidebar-btn:hover {
+  color: #6366f1;
+  background: #eef2ff;
+  border-color: #a5b4fc;
+  width: 28px;
+}
+
 .kb-sidebar {
-  width: 320px;
   flex: none;
   background: #fff;
   border-right: 1px solid #eef0f5;
   overflow: hidden;
+}
+
+.resize-handle {
+  width: 5px;
+  flex: none;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+  position: relative;
+  z-index: 5;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: #c7d2fe;
 }
 
 .slide-enter-active,
@@ -232,10 +388,10 @@ watch(() => props.kbId, (newId) => {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .kb-actions {
-  width: 280px;
   flex: none;
   background: #fff;
   border-left: 1px solid #eef0f5;

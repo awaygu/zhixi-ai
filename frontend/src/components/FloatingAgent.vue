@@ -3,6 +3,7 @@
   <div
     v-if="!expanded"
     class="agent-bubble"
+    :style="props.offsetRight ? { right: (48 + props.offsetRight) + 'px' } : {}"
     @click="openPanel"
   >
     <div class="bubble-inner" @click="openPanel">
@@ -87,7 +88,7 @@
         <span>AI 助手</span>
       </div>
       <div class="header-actions">
-        <span class="header-btn" @click.stop="closePanel">✕</span>
+        <span class="header-btn" @mousedown.stop @click.stop="closePanel">✕</span>
       </div>
     </div>
 
@@ -207,6 +208,7 @@ import type { AgentAction } from '@/api'
 import type { StyleType } from '@/types'
 import { marked } from 'marked'
 
+const props = withDefaults(defineProps<{ offsetRight?: number }>(), { offsetRight: 0 })
 const store = useNewsStore()
 
 const expanded = ref(false)
@@ -280,13 +282,8 @@ const snapPreview = computed(() => {
 })
 
 function openPanel() {
-  const vx = window.innerWidth
-  const vy = window.innerHeight
-  panelPos.value = {
-    x: (vx - panelW.value) / 2,
-    y: (vy - panelH.value) / 2,
-  }
   expanded.value = true
+  dockedRight.value = true
 }
 
 function closePanel() {
@@ -861,8 +858,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .agent-bubble {
   position: fixed;
-  bottom: 32px;
-  right: 32px;
+  bottom: 48px;
+  right: 48px;
   z-index: 2100;
   cursor: pointer;
 }

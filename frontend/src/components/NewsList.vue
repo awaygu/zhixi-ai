@@ -12,6 +12,14 @@
           @click="onRefresh"
           title="刷新当前来源"
         />
+        <el-button
+          size="small"
+          circle
+          @click="emit('toggle-keywords')"
+          title="关键词过滤设置"
+        >
+          <el-icon><Setting /></el-icon>
+        </el-button>
         <el-select
           v-model="sourceFilter"
           placeholder="全部来源"
@@ -80,12 +88,13 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { Refresh, Loading, VideoCamera } from '@element-plus/icons-vue'
+import { Refresh, Loading, VideoCamera, Setting } from '@element-plus/icons-vue'
 import { useNewsStore } from '@/stores'
 import { SOURCE_LABELS, VIDEO_SOURCES } from '@/types'
 import type { NewsItem } from '@/types'
 
 const store = useNewsStore()
+const emit = defineEmits<{ 'toggle-keywords': [] }>()
 const sourceFilter = ref<string>('cls-telegraph')
 
 const sentinelRef = ref<HTMLElement | null>(null)

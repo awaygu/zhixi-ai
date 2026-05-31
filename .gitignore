@@ -34,3 +34,6 @@ Thumbs.db
 # 编辑器
 *.bak
 *.tmp
+
+# 上传文件目录
+backend/uploads/

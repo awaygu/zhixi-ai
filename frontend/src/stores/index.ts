@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { NewsItem, Article, PublishRecord, StyleType, KBDoc, KnowledgeBase, KBConversation, KBMessage } from '@/types'
+import type { KeywordGroup } from '@/api'
 import {
   fetchNews,
   refreshNews,
@@ -16,15 +17,19 @@ import {
   fetchKBDocuments,
   uploadDocument,
   deleteKBDocument,
+  renameKBDocument,
   createKnowledgeBase,
   fetchKnowledgeBases,
   fetchKnowledgeBase,
   deleteKnowledgeBase,
+  updateKnowledgeBase,
   createKBConversation,
   fetchKBConversations,
   deleteKBConversation,
   fetchKBMessages,
   saveKBMessage,
+  fetchKeywordStatus,
+  updateKeywordGroups as apiUpdateKeywords,
 } from '@/api'
 
 export const useNewsStore = defineStore('news', () => {
@@ -60,7 +65,8 @@ export const useNewsStore = defineStore('news', () => {
     try {
       const src = source ?? currentSource.value
       if (source !== undefined) currentSource.value = source
-      await refreshNewsSource(currentSource.value)
+      refreshNewsSource(currentSource.value)
+      await new Promise(r => setTimeout(r, 2000))
       const { items } = await fetchNews(currentSource.value, 0, 100)
       newsItems.value = items
     } finally {
@@ -72,7 +78,8 @@ export const useNewsStore = defineStore('news', () => {
     if (loadingMore.value || loading.value) return
     loadingMore.value = true
     try {
-      await refreshNewsSource(currentSource.value)
+      refreshNewsSource(currentSource.value)
+      await new Promise(r => setTimeout(r, 2000))
       const { items } = await fetchNews(currentSource.value, 0, 100)
       const existingIds = new Set(newsItems.value.map((n) => n.news_id))
       const newItems = items.filter((n) => !existingIds.has(n.news_id))
@@ -87,7 +94,8 @@ export const useNewsStore = defineStore('news', () => {
   async function refreshCurrentSource() {
     loading.value = true
     try {
-      await refreshNewsSource(currentSource.value)
+      refreshNewsSource(currentSource.value)
+      await new Promise(r => setTimeout(r, 2000))
       const { items } = await fetchNews(currentSource.value, 0, 100)
       newsItems.value = items
     } finally {
@@ -186,6 +194,31 @@ export const useNewsStore = defineStore('news', () => {
   const agentDockedRight = ref(false)
   const agentPanelWidth = ref(440)
 
+  // ── Keywords ──────────────────────────────────────────────────
+
+  const kwGroups = ref<KeywordGroup[]>([])
+  const kwLoading = ref(false)
+
+  async function loadKeywords() {
+    kwLoading.value = true
+    try {
+      const data = await fetchKeywordStatus()
+      kwGroups.value = data.groups
+    } finally {
+      kwLoading.value = false
+    }
+  }
+
+  async function saveKeywords(groups: KeywordGroup[]) {
+    kwLoading.value = true
+    try {
+      const data = await apiUpdateKeywords(groups)
+      kwGroups.value = data.groups
+    } finally {
+      kwLoading.value = false
+    }
+  }
+
   // ── Knowledge Base List ────────────────────────────────────────
 
   const knowledgeBases = ref<KnowledgeBase[]>([])
@@ -211,6 +244,15 @@ export const useNewsStore = defineStore('news', () => {
     await loadKnowledgeBases()
   }
 
+  async function updateKB(kbId: string, data: { name?: string; description?: string }) {
+    const updated = await updateKnowledgeBase(kbId, data)
+    if (currentKB.value && currentKB.value.kb_id === kbId) {
+      currentKB.value = { ...currentKB.value, ...updated }
+    }
+    await loadKnowledgeBases()
+    return updated
+  }
+
   // ── Current KB State ────────────────────────────────────────────
 
   const currentKB = ref<KnowledgeBase | null>(null)
@@ -218,6 +260,7 @@ export const useNewsStore = defineStore('news', () => {
   const kbTotalChunks = ref(0)
   const kbUploading = ref(false)
   const kbDeleting = ref(false)
+  const kbSelectedDocIds = ref<string[]>([])
 
   const kbConversations = ref<KBConversation[]>([])
   const currentConvId = ref<string>('')
@@ -225,6 +268,7 @@ export const useNewsStore = defineStore('news', () => {
   async function loadCurrentKB(kbId: string) {
     currentKB.value = await fetchKnowledgeBase(kbId)
     await loadKBDocuments(kbId)
+    kbSelectedDocIds.value = kbDocuments.value.map(d => d.doc_id)
     await loadKBConversations(kbId)
   }
 
@@ -234,6 +278,12 @@ export const useNewsStore = defineStore('news', () => {
     const data = await fetchKBDocuments(id)
     kbDocuments.value = data.documents
     kbTotalChunks.value = data.total_chunks
+    const newIds = new Set(data.documents.map(d => d.doc_id))
+    kbSelectedDocIds.value = kbSelectedDocIds.value.filter(id => newIds.has(id))
+    const unselected = data.documents.filter(d => !kbSelectedDocIds.value.includes(d.doc_id))
+    if (unselected.length > 0 && kbSelectedDocIds.value.length === 0) {
+      kbSelectedDocIds.value = data.documents.map(d => d.doc_id)
+    }
   }
 
   async function uploadKBDoc(file: File, kbId?: string) {
@@ -258,6 +308,30 @@ export const useNewsStore = defineStore('news', () => {
     } finally {
       kbDeleting.value = false
     }
+  }
+
+  async function renameKBDoc(docId: string, filename: string, kbId?: string) {
+    const id = kbId || currentKB.value?.kb_id
+    if (!id) return
+    await renameKBDocument(id, docId, filename)
+    await loadKBDocuments(id)
+  }
+
+  function toggleDocSelection(docId: string) {
+    const idx = kbSelectedDocIds.value.indexOf(docId)
+    if (idx >= 0) {
+      kbSelectedDocIds.value.splice(idx, 1)
+    } else {
+      kbSelectedDocIds.value.push(docId)
+    }
+  }
+
+  function selectAllDocs() {
+    kbSelectedDocIds.value = kbDocuments.value.map(d => d.doc_id)
+  }
+
+  function deselectAllDocs() {
+    kbSelectedDocIds.value = []
   }
 
   async function loadKBConversations(kbId?: string) {
@@ -334,6 +408,7 @@ export const useNewsStore = defineStore('news', () => {
     loadKnowledgeBases,
     createKB,
     removeKB,
+    updateKB,
     currentKB,
     kbDocuments,
     kbTotalChunks,
@@ -345,10 +420,20 @@ export const useNewsStore = defineStore('news', () => {
     loadKBDocuments,
     uploadKBDoc,
     deleteKBDoc,
+    renameKBDoc,
+    kbSelectedDocIds,
+    toggleDocSelection,
+    selectAllDocs,
+    deselectAllDocs,
     loadKBConversations,
     createConv,
     removeConv,
     loadConvMessages,
     saveConvMessage,
+
+    kwGroups,
+    kwLoading,
+    loadKeywords,
+    saveKeywords,
   }
 })

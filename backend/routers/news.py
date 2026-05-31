@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
@@ -12,10 +13,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["news"])
 
 
+async def _bg_crawl_and_save(source: str, crawler) -> None:
+    try:
+        items = await asyncio.wait_for(crawler.crawl(), timeout=15.0)
+    except asyncio.TimeoutError:
+        logger.warning("[refresh] %s: crawl timed out after 15s", source)
+        return
+    except Exception as e:
+        logger.warning("[refresh] %s crawl error: %s", source, e)
+        return
+    async with deps.news_lock:
+        filtered = deps.kw_filter.filter_newsitems(items)
+        new_count = 0
+        for item in filtered:
+            item_dict = item.to_dict()
+            existing = any(
+                n["news_id"] == item_dict["news_id"]
+                for n in deps.news_store
+            )
+            if not existing:
+                deps.news_store.append(item_dict)
+                new_count += 1
+        await deps.save_news(deps.news_store)
+    logger.info("[refresh] %s done: %d total, %d new", source, len(items), new_count)
+
+
 @router.post("/news/refresh")
 async def refresh_news():
     async with deps.news_lock:
-        deps.news_store = []
+        existing_ids = {n["news_id"] for n in deps.news_store}
         results = {}
         all_raw: list = []
 
@@ -40,11 +66,16 @@ async def refresh_news():
             logger.warning("  ✗ RSS: %s", e)
 
         filtered = deps.kw_filter.filter_newsitems(all_raw)
+        new_count = 0
         for item in filtered:
-            deps.news_store.append(item.to_dict())
+            d = item.to_dict()
+            if d["news_id"] not in existing_ids:
+                deps.news_store.append(d)
+                existing_ids.add(d["news_id"])
+                new_count += 1
 
         await deps.save_news(deps.news_store)
-    return {"total": len(deps.news_store), "total_raw": len(all_raw), "results": results}
+    return {"total": len(deps.news_store), "new": new_count, "total_raw": len(all_raw), "results": results}
 
 
 @router.get("/news")
@@ -88,30 +119,15 @@ async def get_news_content(news_id: str):
 async def refresh_news_source(source: str):
     if source in deps.NEWSNOW_CRAWLERS:
         crawler = deps.NEWSNOW_CRAWLERS[source]
-        items = await crawler.crawl()
     elif any(feed.id == source for feed in deps.DEFAULT_RSS_FEEDS):
         feed = next(f for f in deps.DEFAULT_RSS_FEEDS if f.id == source)
         from crawlers.rss import RSSCrawler
         crawler = RSSCrawler(feed)
-        items = await crawler.crawl()
     else:
         raise HTTPException(400, f"Unknown source: {source}")
 
-    async with deps.news_lock:
-        filtered = deps.kw_filter.filter_newsitems(items)
-        new_count = 0
-        for item in filtered:
-            item_dict = item.to_dict()
-            existing = any(
-                n["news_id"] == item_dict["news_id"]
-                for n in deps.news_store
-            )
-            if not existing:
-                deps.news_store.append(item_dict)
-                new_count += 1
-        await deps.save_news(deps.news_store)
-
-    return {"source": source, "total": len(items), "filtered": len(filtered), "new": new_count}
+    asyncio.create_task(_bg_crawl_and_save(source, crawler))
+    return {"source": source, "status": "refreshing"}
 
 
 @router.get("/sources")
@@ -173,30 +189,8 @@ async def refresh_newsnow_platform(platform_id: str):
         )
 
     crawler = deps.NEWSNOW_CRAWLERS[platform_id]
-    items = await crawler.crawl()
-
-    async with deps.news_lock:
-        filtered = deps.kw_filter.filter_newsitems(items)
-        new_count = 0
-        for item in filtered:
-            item_dict = item.to_dict()
-            existing = any(
-                n["news_id"] == item_dict["news_id"]
-                for n in deps.news_store
-            )
-            if not existing:
-                deps.news_store.append(item_dict)
-                new_count += 1
-
-        await deps.save_news(deps.news_store)
-
-    return {
-        "platform": platform_id,
-        "name": crawler.platform_name,
-        "total": len(items),
-        "filtered": len(filtered),
-        "new": new_count,
-    }
+    asyncio.create_task(_bg_crawl_and_save(platform_id, crawler))
+    return {"platform": platform_id, "name": crawler.platform_name, "status": "refreshing"}
 
 
 @router.get("/rss/feeds")

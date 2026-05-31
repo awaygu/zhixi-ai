@@ -26,6 +26,7 @@ RSS_CRAWL_INTERVAL = int(os.getenv("RSS_CRAWL_INTERVAL", "1800"))
 SCHEDULE_MIN_INTERVAL = 60
 
 KEYWORDS_FILE = os.getenv("KEYWORDS_FILE", str(Path(__file__).parent / "keywords.txt"))
+KEYWORDS_FILTER_ENABLED = os.getenv("KEYWORDS_FILTER_ENABLED", "true").lower() == "true"
 
 # Publishing
 PUBLISH_RETRY = int(os.getenv("PUBLISH_RETRY", "3"))
@@ -78,3 +79,5 @@ DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
 KB_CHUNK_SIZE = int(os.getenv("KB_CHUNK_SIZE", "500"))
 KB_CHUNK_OVERLAP = int(os.getenv("KB_CHUNK_OVERLAP", "50"))
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", str(Path(__file__).parent / "uploads"))
+KB_VISION_MODEL = os.getenv("KB_VISION_MODEL", "qwen-vl-ocr-latest")
+KB_VISION_BASE_URL = os.getenv("KB_VISION_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")

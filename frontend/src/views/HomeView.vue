@@ -26,7 +26,7 @@
         class="entry-card card-kb"
         @click="$router.push(`/kb/${kb.kb_id}`)"
       >
-        <div class="card-icon">📚</div>
+        <div class="card-icon">{{ getKbIcon(kb.name, kb.description) }}</div>
         <h2>{{ kb.name }}</h2>
         <p v-if="kb.description" class="card-desc">{{ kb.description }}</p>
         <div class="kb-stats">
@@ -69,6 +69,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Delete } from '@element-plus/icons-vue'
 import { useNewsStore } from '@/stores'
+import { getKbIcon } from '@/types'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const store = useNewsStore()

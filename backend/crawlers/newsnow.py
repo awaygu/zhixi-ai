@@ -1,7 +1,12 @@
 """NewsNow API unified crawler.
 
-This crawler uses the NewsNow API (https://newsnow.busiyi.world/api/s) to fetch
-hot news from various platforms, similar to TrendRadar's implementation.
+Supports two deployment modes:
+- Local Docker (recommended): http://localhost:4444/api/s
+- Public instance (fallback): https://newsnow.busiyi.world/api/s
+
+The crawler reads NEWSNOW_API_URL from config.py (which loads from .env).
+If the primary API is unreachable, it automatically falls back to the
+public instance.
 
 Supported platforms:
 - cls-hot: 财联社热门
@@ -15,15 +20,19 @@ Supported platforms:
 - douyin: 抖音
 """
 
+import asyncio
 import hashlib
 import json
+import logging
 import random
-import time
 from datetime import datetime
 from typing import Any
 
+import requests as req_lib
+
 from .base import BaseCrawler, NewsItem
 
+logger = logging.getLogger(__name__)
 
 PLATFORM_CONFIG = {
     "cls-hot": {"name": "财联社热门", "alias": "cls_hot"},
@@ -37,14 +46,25 @@ PLATFORM_CONFIG = {
     "douyin": {"name": "抖音", "alias": "douyin", "media_type": "video"},
 }
 
-
 VIDEO_PLATFORMS = {"douyin"}
+
+FALLBACK_API_URL = "https://newsnow.busiyi.world/api/s"
+
+
+async def check_newsnow_health(base_url: str, timeout: float = 3.0) -> bool:
+    try:
+        api_url = f"{base_url}?id=weibo"
+        resp = await asyncio.to_thread(
+            req_lib.get, api_url, timeout=timeout,
+        )
+        data = resp.json()
+        return data.get("status") in ("success", "cache")
+    except Exception:
+        return False
 
 
 class NewsNowCrawler(BaseCrawler):
     """Unified crawler using NewsNow API."""
-
-    DEFAULT_API_URL = "https://newsnow.busiyi.world/api/s"
 
     DEFAULT_HEADERS = {
         "User-Agent": (
@@ -55,16 +75,15 @@ class NewsNowCrawler(BaseCrawler):
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Connection": "keep-alive",
-        "Cache-Control": "no-cache",
     }
 
     def __init__(
         self,
         platform_id: str,
         api_url: str | None = None,
-        max_retries: int = 2,
-        retry_wait_min: int = 3,
-        retry_wait_max: int = 5,
+        max_retries: int = 1,
+        retry_wait_min: int = 1,
+        retry_wait_max: int = 2,
     ):
         if platform_id not in PLATFORM_CONFIG:
             raise ValueError(
@@ -75,17 +94,34 @@ class NewsNowCrawler(BaseCrawler):
         self.platform_id = platform_id
         self.platform_name = PLATFORM_CONFIG[platform_id]["name"]
         self.alias = PLATFORM_CONFIG[platform_id]["alias"]
-        self.api_url = api_url or self.DEFAULT_API_URL
+        self.api_url = api_url
         self.max_retries = max_retries
         self.retry_wait_min = retry_wait_min
         self.retry_wait_max = retry_wait_max
 
+    def _resolve_api_url(self) -> str:
+        if self.api_url:
+            return self.api_url
+        try:
+            from config import NEWSNOW_API_URL
+            return NEWSNOW_API_URL
+        except ImportError:
+            return FALLBACK_API_URL
+
     async def crawl(self) -> list[NewsItem]:
-        """Crawl news from NewsNow API."""
-        url = f"{self.api_url}?id={self.platform_id}&latest"
+        base = self._resolve_api_url()
+        url = f"{base}?id={self.platform_id}"
         data = await self._fetch_with_retry(url)
         if not data:
-            return self._mock_fallback()
+            if base != FALLBACK_API_URL:
+                logger.warning(
+                    "[%s] Primary API failed, trying fallback: %s",
+                    self.platform_name, FALLBACK_API_URL,
+                )
+                fallback_url = f"{FALLBACK_API_URL}?id={self.platform_id}"
+                data = await self._fetch_with_retry(fallback_url)
+            if not data:
+                return self._mock_fallback()
 
         items = []
         seen = set()
@@ -106,9 +142,16 @@ class NewsNowCrawler(BaseCrawler):
             mobile_url = entry.get("mobileUrl", "")
 
             if self.platform_id == "toutiao" and item_url:
-                tid_match = __import__("re").search(r"/(\d+)/?", item_url)
+                import re
+                tid_match = re.search(r"/(\d+)/?", item_url)
                 if tid_match:
                     item_url = f"https://m.toutiao.com/i{tid_match.group(1)}/"
+
+            pub_ts = entry.get("pubDate")
+            if pub_ts and isinstance(pub_ts, (int, float)):
+                published_at = datetime.fromtimestamp(pub_ts / 1000)
+            else:
+                published_at = datetime.now()
 
             items.append(NewsItem(
                 news_id=f"{self.alias}_{dedup_key}",
@@ -116,7 +159,7 @@ class NewsNowCrawler(BaseCrawler):
                 summary=title[:200],
                 source=self.platform_id,
                 url=mobile_url or item_url,
-                published_at=datetime.now(),
+                published_at=published_at,
                 media_type=PLATFORM_CONFIG[self.platform_id].get("media_type", "article"),
                 extra={"original_url": item_url},
             ))
@@ -124,7 +167,6 @@ class NewsNowCrawler(BaseCrawler):
         return items if items else self._mock_fallback()
 
     async def _fetch_with_retry(self, url: str) -> dict | None:
-        """Fetch data with retry mechanism."""
         retries = 0
         while retries <= self.max_retries:
             try:
@@ -142,21 +184,15 @@ class NewsNowCrawler(BaseCrawler):
                 if retries <= self.max_retries:
                     wait = random.uniform(self.retry_wait_min, self.retry_wait_max)
                     wait += (retries - 1) * random.uniform(1, 2)
-                    await self._sleep(wait)
+                    await asyncio.sleep(wait)
                 else:
-                    print(f"[{self.platform_name}] Fetch failed: {e}")
+                    logger.warning("[%s] Fetch failed after %d retries: %s",
+                                   self.platform_name, self.max_retries, e)
                     return None
 
         return None
 
-    @staticmethod
-    async def _sleep(seconds: float):
-        """Async sleep helper."""
-        import asyncio
-        await asyncio.sleep(seconds)
-
     def _mock_fallback(self) -> list[NewsItem]:
-        """Fallback mock data when API fails."""
         mocks = [
             (f"{self.platform_name}热点新闻1", "这是第一条热点新闻的详细描述"),
             (f"{self.platform_name}热点新闻2", "这是第二条热点新闻的详细描述"),
@@ -175,47 +211,39 @@ class NewsNowCrawler(BaseCrawler):
 
 
 class NewsNowBatchCrawler:
-    """Batch crawler for multiple platforms."""
+    """Batch crawler for multiple platforms with concurrent requests."""
 
     def __init__(
         self,
         platform_ids: list[str] | None = None,
-        request_interval_ms: int = 100,
     ):
         self.platform_ids = platform_ids or list(PLATFORM_CONFIG.keys())
-        self.request_interval_ms = request_interval_ms
         self._crawlers: dict[str, NewsNowCrawler] = {}
 
         for pid in self.platform_ids:
             try:
                 self._crawlers[pid] = NewsNowCrawler(pid)
             except ValueError as e:
-                print(f"Warning: {e}")
+                logger.warning("Skipping unknown platform: %s", e)
 
     async def crawl_all(self) -> dict[str, list[NewsItem]]:
-        """Crawl all configured platforms."""
+        tasks = {}
+        for pid, crawler in self._crawlers.items():
+            tasks[pid] = asyncio.create_task(crawler.crawl())
+
         results: dict[str, list[NewsItem]] = {}
-
-        for i, (pid, crawler) in enumerate(self._crawlers.items()):
+        for pid, task in tasks.items():
             try:
-                items = await crawler.crawl()
+                items = await task
                 results[pid] = items
-                print(f"[{crawler.platform_name}] Got {len(items)} items")
+                logger.info("[%s] Got %d items", self._crawlers[pid].platform_name, len(items))
             except Exception as e:
-                print(f"[{crawler.platform_name}] Error: {e}")
+                logger.warning("[%s] Error: %s", self._crawlers[pid].platform_name, e)
                 results[pid] = []
-
-            if i < len(self._crawlers) - 1:
-                interval = self.request_interval_ms / 1000
-                interval += random.uniform(-0.01, 0.02)
-                interval = max(0.05, interval)
-                import asyncio
-                await asyncio.sleep(interval)
 
         return results
 
     def get_platform_names(self) -> dict[str, str]:
-        """Get mapping of alias to display name."""
         return {
             crawler.alias: crawler.platform_name
             for crawler in self._crawlers.values()

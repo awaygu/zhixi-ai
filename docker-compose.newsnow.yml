@@ -1,0 +1,25 @@
+services:
+  newsnow:
+    image: ghcr.io/ourongxing/newsnow:latest
+    container_name: newsnow-local
+    ports:
+      - '127.0.0.1:4444:4444'
+    volumes:
+      - newsnow_data:/usr/app/.data
+    environment:
+      - HOST=0.0.0.0
+      - PORT=4444
+      - NODE_ENV=production
+      - ENABLE_CACHE=true
+      - INIT_TABLE=true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    restart: unless-stopped
+
+volumes:
+  newsnow_data:
+    name: newsnow_data
