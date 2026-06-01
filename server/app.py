@@ -16,7 +16,7 @@ from config import (
     RSS_CRAWL_INTERVAL,
     NEWSNOW_API_URL,
 )
-from crawlers.newsnow import check_newsnow_health, FALLBACK_API_URL
+from sources.newsnow import check_newsnow_health, FALLBACK_API_URL
 from database import (
     init_db,
     load_news,
@@ -24,7 +24,7 @@ from database import (
     load_articles,
     load_publish_log,
 )
-from routers.deps import (
+from api.deps import (
     news_store,
     article_store,
     publish_log,
@@ -35,14 +35,14 @@ from routers.deps import (
     newsnow_interval as _newsnow_interval,
     rss_interval as _rss_interval,
 )
-from routers.news import router as news_router
-from routers.interpret import router as interpret_router
-from routers.publish import router as publish_router
-from routers.schedule import router as schedule_router
-from routers.keywords import router as keywords_router
-from routers.prompts import router as prompts_router
-from routers.agent import router as agent_router
-from routers.knowledge import router as knowledge_router
+from api.news import router as news_router
+from api.interpret import router as interpret_router
+from api.publish import router as publish_router
+from api.schedule import router as schedule_router
+from api.keywords import router as keywords_router
+from api.prompts import router as prompts_router
+from api.agent import router as agent_router
+from api.knowledge import router as knowledge_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ async def _wait_for_newsnow():
 
 
 async def lifespan(app: FastAPI):
-    import routers.deps as _d
+    import api.deps as _d
 
     await _wait_for_newsnow()
 
@@ -119,7 +119,7 @@ async def lifespan(app: FastAPI):
             _d.newsnow_interval,
             _d.rss_interval,
         )
-        from routers.schedule import _newsnow_crawl_loop, _rss_crawl_loop
+        from api.schedule import _newsnow_crawl_loop, _rss_crawl_loop
         asyncio.create_task(_newsnow_crawl_loop())
         asyncio.create_task(_rss_crawl_loop())
 

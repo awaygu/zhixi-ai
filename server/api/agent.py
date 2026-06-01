@@ -14,8 +14,8 @@ from pydantic import BaseModel, Field
 
 from config import NEWS_SOURCES
 from . import deps
-from agents.interpreter import NewsInterpreter
-from agents.style_manager import StyleType, prompt_manager
+from core.interpreter import NewsInterpreter
+from core.style_manager import StyleType, prompt_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agent", tags=["agent"])

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from config import KEYWORDS_FILE
-from crawlers.filter import KeywordFilter
+from sources.filter import KeywordFilter
 from . import deps
 
 logger = logging.getLogger(__name__)

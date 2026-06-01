@@ -6,17 +6,17 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: () => import('@/views/HomeView.vue'),
+      component: () => import('@/pages/HomeView.vue'),
     },
     {
       path: '/news',
       name: 'news',
-      component: () => import('@/views/NewsView.vue'),
+      component: () => import('@/pages/NewsView.vue'),
     },
     {
       path: '/kb/:kbId',
       name: 'kb-detail',
-      component: () => import('@/views/KnowledgeBaseView.vue'),
+      component: () => import('@/pages/KnowledgeBaseView.vue'),
       props: true,
     },
   ],

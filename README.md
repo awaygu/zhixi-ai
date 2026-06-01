@@ -23,9 +23,9 @@
 ## 🏗️ 项目结构
 
 ```
-zhixi/
+zhixi-ai/
 ├── docker-compose.newsnow.yml  # NewsNow Docker 中台服务配置
-├── backend/                    # FastAPI 后端服务
+├── server/                     # FastAPI 后端服务
 │   ├── app.py                 # 主入口 + 应用配置 + NewsNow 健康检查
 │   ├── config.py              # 全局配置管理
 │   ├── database.py            # SQLite 数据库操作（8张表）
@@ -33,15 +33,15 @@ zhixi/
 │   ├── keywords.txt           # 关键词过滤列表
 │   ├── requirements.txt       # Python 依赖
 │   ├── uploads/               # 文件上传目录（按知识库隔离）
-│   ├── agents/                # AI 解读模块
+│   ├── core/                  # AI 解读核心模块
 │   │   ├── interpreter.py     # 新闻解读器
 │   │   └── style_manager.py   # 风格管理器
-│   ├── crawlers/              # 新闻爬虫模块
+│   ├── sources/               # 新闻来源模块
 │   │   ├── base.py            # 爬虫基类（requests + asyncio.to_thread）
 │   │   ├── newsnow.py         # NewsNow 统一爬虫（9平台，含 fallback）
 │   │   ├── rss.py             # RSS/Atom 爬虫
 │   │   └── filter.py          # 内容过滤器
-│   ├── knowledge/             # 知识库模块
+│   ├── rag/                   # RAG 知识库模块
 │   │   ├── loader.py          # 文档解析（PDF/DOCX/TXT/MD）
 │   │   ├── chunker.py         # 文本分块
 │   │   ├── embeddings.py      # DashScope 文本嵌入
@@ -50,7 +50,7 @@ zhixi/
 │   │   ├── xiaohongshu.py     # 小红书发布器
 │   │   ├── wechat_mp.py       # 微信公众号发布器
 │   │   └── douyin_pub.py      # 抖音发布器
-│   └── routers/               # API 路由
+│   └── api/                   # API 路由
 │       ├── deps.py            # 依赖注入 + 共享状态
 │       ├── news.py            # 新闻接口（含后台刷新）
 │       ├── interpret.py       # AI 解读接口
@@ -60,7 +60,7 @@ zhixi/
 │       ├── schedule.py        # 定时任务接口
 │       ├── keywords.py        # 关键词管理
 │       └── prompts.py         # 提示词管理
-├── frontend/                   # Vue 3 前端应用
+├── web/                        # Vue 3 前端应用
 │   ├── src/
 │   │   ├── App.vue            # 根组件
 │   │   ├── main.ts            # 入口文件
@@ -68,7 +68,7 @@ zhixi/
 │   │   ├── router/index.ts    # 路由配置
 │   │   ├── stores/index.ts    # Pinia 状态管理（非阻塞刷新）
 │   │   ├── types/index.ts     # TypeScript 类型定义
-│   │   ├── views/             # 页面
+│   │   ├── pages/             # 页面
 │   │   │   ├── HomeView.vue           # 首页（知识库列表）
 │   │   │   ├── NewsView.vue           # 新闻解读
 │   │   │   └── KnowledgeBaseView.vue  # 知识库详情
@@ -133,7 +133,7 @@ curl http://localhost:4444/api/s?id=weibo
 ### 3. 后端启动
 
 ```bash
-cd backend
+cd server
 
 # 创建虚拟环境（推荐）
 python -m venv venv
@@ -174,7 +174,7 @@ npm run dev
 
 ## 🔧 配置说明
 
-### 环境变量（backend/.env）
+### 环境变量（server/.env）
 
 ```env
 # LLM 配置

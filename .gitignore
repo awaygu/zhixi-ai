@@ -12,7 +12,7 @@ __pycache__/
 *.pyd
 
 # 构建产物
-frontend/dist/
+web/dist/
 
 # 数据库
 *.db
@@ -36,4 +36,4 @@ Thumbs.db
 *.tmp
 
 # 上传文件目录
-backend/uploads/
+server/uploads/

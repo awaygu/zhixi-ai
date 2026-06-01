@@ -24,7 +24,7 @@ from config import (
     SCHEDULE_MIN_INTERVAL,
     JINA_READER_URL,
 )
-from crawlers import (
+from sources import (
     NewsNowCrawler,
     NewsNowBatchCrawler,
     PLATFORM_CONFIG,
@@ -32,9 +32,9 @@ from crawlers import (
     RSSFeedConfig,
     DEFAULT_RSS_FEEDS,
 )
-from crawlers.filter import KeywordFilter
-from agents import NewsInterpreter, StyleType
-from agents.style_manager import prompt_manager
+from sources.filter import KeywordFilter
+from core import NewsInterpreter, StyleType
+from core.style_manager import prompt_manager
 from publishers import XiaohongshuPublisher, WechatMpPublisher, DouyinPublisher
 from database import (
     append_news,

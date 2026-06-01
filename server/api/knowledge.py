@@ -31,10 +31,10 @@ from database import (
     save_message,
     load_messages,
 )
-from knowledge.embeddings import DashScopeEmbedding
-from knowledge.chunker import TextChunker
-from knowledge.vectorstore import VectorStoreManager
-from knowledge.loader import DocumentLoader, IMAGE_EXTENSIONS
+from rag.embeddings import DashScopeEmbedding
+from rag.chunker import TextChunker
+from rag.vectorstore import VectorStoreManager
+from rag.loader import DocumentLoader, IMAGE_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])

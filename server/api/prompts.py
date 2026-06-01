@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agents.style_manager import prompt_manager
+from core.style_manager import prompt_manager
 
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
 
