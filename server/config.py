@@ -102,3 +102,11 @@ WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "false").lower() == "true"
 WEB_SEARCH_ENGINE = os.getenv("WEB_SEARCH_ENGINE", "tavily")  # kimi / tavily
 MOONSHOT_API_KEY = os.getenv("MOONSHOT_API_KEY", "")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
+# Memory (Short-term)
+MEMORY_DB_PATH = os.getenv("MEMORY_DB_PATH", str(Path(__file__).parent / "data" / "agent_memory.db"))
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "deepseek-chat")
+SUMMARY_MODEL_BASE_URL = os.getenv("SUMMARY_MODEL_BASE_URL", LLM_BASE_URL)
+SUMMARY_MODEL_API_KEY = os.getenv("SUMMARY_MODEL_API_KEY", LLM_API_KEY)
+SUMMARY_TRIGGER_TOKENS = int(os.getenv("SUMMARY_TRIGGER_TOKENS", "6000"))
+SUMMARY_KEEP_MESSAGES = int(os.getenv("SUMMARY_KEEP_MESSAGES", "10"))

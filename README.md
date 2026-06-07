@@ -1,10 +1,10 @@
 # 识渊 AI · 智能内容工作台
 
-基于大语言模型的智能内容创作平台，集成新闻AI解读、多知识库RAG检索与多平台内容生成，打造从信息获取到内容发布的完整工作流。
+基于大语言模型的智能内容创作平台，集成新闻AI解读、多知识库RAG检索、联网搜索、智能体短期记忆与多平台内容发布，打造从信息获取到内容发布的完整工作流。
 
 ---
 
-## 🛠️ 技术栈
+## 技术栈
 
 | 分类 | 技术 | 说明 |
 |------|------|------|
@@ -15,77 +15,100 @@
 | **状态** | Pinia | Vue 3 状态管理 |
 | **路由** | Vue Router | 前端路由 |
 | **数据库** | SQLite + aiosqlite | 异步轻量级嵌入式数据库 |
-| **AI** | LangChain + OpenAI API | LLM 应用框架 |
+| **AI 框架** | LangChain + LangGraph | LLM 应用框架 + Agent 状态图 |
 | **向量** | FAISS + DashScope | 语义检索 + 文本嵌入 |
+| **联网搜索** | Kimi / Tavily | 双引擎可切换的互联网搜索 |
+| **发布** | Playwright | 浏览器自动化多平台发布 |
 
 ---
 
-## 🏗️ 项目结构
+## 项目结构
 
 ```
 shiyuan-ai/
-├── docker-compose.newsnow.yml  # NewsNow Docker 中台服务配置
-├── server/                     # FastAPI 后端服务
-│   ├── app.py                 # 主入口 + 应用配置 + NewsNow 健康检查
-│   ├── config.py              # 全局配置管理
-│   ├── database.py            # SQLite 数据库操作（8张表）
-│   ├── prompts.py             # AI 提示词管理
-│   ├── keywords.txt           # 关键词过滤列表
-│   ├── requirements.txt       # Python 依赖
-│   ├── uploads/               # 文件上传目录（按知识库隔离）
-│   ├── core/                  # AI 解读核心模块
-│   │   ├── interpreter.py     # 新闻解读器
-│   │   └── style_manager.py   # 风格管理器
-│   ├── sources/               # 新闻来源模块
-│   │   ├── base.py            # 爬虫基类（requests + asyncio.to_thread）
-│   │   ├── newsnow.py         # NewsNow 统一爬虫（9平台，含 fallback）
-│   │   ├── rss.py             # RSS/Atom 爬虫
-│   │   └── filter.py          # 内容过滤器
-│   ├── rag/                   # RAG 知识库模块
-│   │   ├── loader.py          # 文档解析（PDF/DOCX/TXT/MD）
-│   │   ├── chunker.py         # 文本分块
-│   │   ├── embeddings.py      # DashScope 文本嵌入
-│   │   └── vectorstore.py     # FAISS 向量存储（多库隔离）
-│   ├── publishers/            # 发布器模块
-│   │   ├── xiaohongshu.py     # 小红书发布器
-│   │   ├── wechat_mp.py       # 微信公众号发布器
-│   │   └── douyin_pub.py      # 抖音发布器
-│   └── api/                   # API 路由
-│       ├── deps.py            # 依赖注入 + 共享状态
-│       ├── news.py            # 新闻接口（含后台刷新）
-│       ├── interpret.py       # AI 解读接口
-│       ├── knowledge.py       # 知识库 CRUD + RAG 接口
-│       ├── agent.py           # 智能体（8工具函数调用）
-│       ├── publish.py         # 发布接口
-│       ├── schedule.py        # 定时任务接口
-│       ├── keywords.py        # 关键词管理
-│       └── prompts.py         # 提示词管理
+├── docker-compose.newsnow.yml   # NewsNow Docker 中台服务配置
+├── server/                      # FastAPI 后端服务
+│   ├── app.py                  # 主入口 + 应用配置 + 生命周期
+│   ├── config.py               # 全局配置管理（含记忆、搜索配置）
+│   ├── database.py             # SQLite 数据库操作（8张表）
+│   ├── prompts.py              # AI 提示词管理
+│   ├── keywords.txt            # 关键词过滤列表
+│   ├── requirements.txt        # Python 依赖
+│   ├── .env.example            # 环境变量模板
+│   ├── data/                   # 运行时数据目录
+│   │   └── agent_memory.db     # Agent 记忆数据库（自动创建）
+│   ├── uploads/                # 文件上传目录（按知识库隔离）
+│   ├── cookies/                # 浏览器登录 Cookie 持久化
+│   ├── core/                   # AI 核心模块
+│   │   ├── agent_graph.py      # LangGraph Agent 定义（create_agent + SummarizationMiddleware）
+│   │   ├── checkpointer.py     # SQLite 持久化层（conversations + messages 双表）
+│   │   ├── interpreter.py      # 新闻解读器
+│   │   ├── style_manager.py    # 风格管理器
+│   │   └── image_generator.py  # AI 配图生成（DashScope qwen-image）
+│   ├── sources/                # 新闻来源模块
+│   │   ├── base.py             # 爬虫基类（requests + asyncio.to_thread）
+│   │   ├── newsnow.py          # NewsNow 统一爬虫（9平台，含 fallback）
+│   │   ├── rss.py              # RSS/Atom 爬虫
+│   │   └── filter.py           # 内容过滤器
+│   ├── rag/                    # RAG 知识库模块
+│   │   ├── loader.py           # 文档解析（PDF/DOCX/TXT/MD）
+│   │   ├── chunker.py          # 文本分块
+│   │   ├── embeddings.py       # DashScope 文本嵌入
+│   │   └── vectorstore.py      # FAISS 向量存储（多库隔离）
+│   ├── tools/                  # Agent 工具模块
+│   │   ├── web_search.py       # 联网搜索统一路由（Kimi/Tavily 切换）
+│   │   ├── web_search_kimi.py  # Kimi $web_search 实现
+│   │   └── web_search_tavily.py# Tavily Search API 实现
+│   ├── publishers/             # 发布器模块
+│   │   ├── base.py             # 发布器基类
+│   │   ├── xiaohongshu.py      # 小红书发布器（Playwright）
+│   │   ├── wechat_mp.py        # 微信公众号发布器（API + Playwright）
+│   │   └── douyin_pub.py       # 抖音发布器（Playwright）
+│   ├── api/                    # API 路由
+│   │   ├── deps.py             # 依赖注入 + 共享状态
+│   │   ├── agent.py            # 智能体对话（LangGraph Agent + SSE 流式）
+│   │   ├── conversations.py    # 对话管理 CRUD
+│   │   ├── news.py             # 新闻接口（含后台刷新）
+│   │   ├── interpret.py        # AI 解读接口
+│   │   ├── knowledge.py        # 知识库 CRUD + RAG 接口
+│   │   ├── publish.py          # 发布接口
+│   │   ├── schedule.py         # 定时任务接口
+│   │   ├── tasks.py            # 异步任务管理
+│   │   ├── keywords.py         # 关键词管理
+│   │   └── prompts.py          # 提示词管理
+│   └── specs/                  # 设计规格文档
+│       ├── memory-spec.md      # 短期记忆功能规格
+│       └── publish-spec.md     # 发布功能规格
 ├── web/                        # Vue 3 前端应用
 │   ├── src/
-│   │   ├── App.vue            # 根组件
-│   │   ├── main.ts            # 入口文件
-│   │   ├── api/index.ts       # API 请求 + SSE 流式消费
-│   │   ├── router/index.ts    # 路由配置
-│   │   ├── stores/index.ts    # Pinia 状态管理（非阻塞刷新）
-│   │   ├── types/index.ts     # TypeScript 类型定义
-│   │   ├── pages/             # 页面
+│   │   ├── App.vue             # 根组件
+│   │   ├── main.ts             # 入口文件
+│   │   ├── api/index.ts        # API 请求 + SSE 流式消费 + 对话管理
+│   │   ├── router/index.ts     # 路由配置（首页/新闻/知识库）
+│   │   ├── stores/index.ts     # Pinia 状态管理
+│   │   ├── types/index.ts      # TypeScript 类型定义
+│   │   ├── pages/              # 页面
 │   │   │   ├── HomeView.vue           # 首页（知识库列表）
 │   │   │   ├── NewsView.vue           # 新闻解读
 │   │   │   └── KnowledgeBaseView.vue  # 知识库详情
 │   │   └── components/        # 组件
 │   │       ├── NewsList.vue           # 新闻列表
 │   │       ├── NewsDetail.vue         # 新闻详情（正文展示 / iframe）
-│   │       ├── FloatingAgent.vue      # 智能体浮窗
+│   │       ├── FloatingAgent.vue      # 智能体浮窗（含会话列表 + 联网搜索开关）
+│   │       ├── GeneratePanel.vue      # 文章生成面板
+│   │       ├── PublishPanel.vue       # 发布面板
+│   │       ├── TaskPanel.vue          # 异步任务面板
 │   │       ├── KBFilePanel.vue        # 知识库文件管理
 │   │       ├── KBChatPanel.vue        # 知识库 RAG 对话
-│   │       └── KBActionPanel.vue      # 智能生成面板
+│   │       ├── KBActionPanel.vue      # 智能生成面板
+│   │       └── KeywordSettings.vue    # 关键词过滤设置
 │   └── package.json
 └── README.md
 ```
 
 ---
 
-## ✨ 核心功能
+## 核心功能
 
 | 功能 | 说明 |
 |------|------|
@@ -94,14 +117,69 @@ shiyuan-ai/
 | **文档上传与解析** | 支持 PDF / DOCX / TXT / MD，自动分块嵌入 |
 | **RAG 语义检索** | DashScope 嵌入 + FAISS 向量检索，引用来源 |
 | **多风格文章生成** | 小红书 / 公众号 / 抖音三种风格 |
-| **会话持久化** | 每个知识库独立会话，对话记录永久保存 |
-| **智能体** | 8工具函数调用，自动刷新/搜索/对比/简报 |
-| **多平台发布** | 模拟发布到小红书/公众号/抖音 |
+| **联网搜索** | 支持 Kimi / Tavily 双引擎，前端一键开关 |
+| **智能体短期记忆** | LangGraph Agent + SummarizationMiddleware 自动摘要压缩 |
+| **会话管理** | 多会话切换、历史恢复、会话列表侧边栏 |
+| **AI 配图生成** | DashScope qwen-image 自动生成文章配图 |
+| **多平台发布** | Playwright 自动化发布到小红书/公众号/抖音 |
 | **定时爬取** | 自动定时刷新新闻数据 |
 
 ---
 
-## 🚀 快速开始
+## 智能体架构
+
+### Agent 工具函数（9个）
+
+| 工具 | 说明 |
+|------|------|
+| `refresh_news` | 刷新所有新闻源 |
+| `refresh_source` | 刷新指定新闻源 |
+| `get_trends` | 获取热门话题和关键词趋势 |
+| `search_news` | 按关键词搜索新闻 |
+| `compare_sources` | 对比不同来源对同一话题的报道 |
+| `get_news_content` | 获取新闻完整内容 |
+| `get_briefing_data` | 获取每日简报数据 |
+| `search_knowledge_base` | 搜索用户上传的知识库文档 |
+| `web_search` | 联网搜索互联网最新信息 |
+
+### 短期记忆实现
+
+```
+用户消息 ──▶ LangGraph Agent (create_agent)
+                │
+                ├── SummarizationMiddleware
+                │     ├── trigger: token 数超过阈值（默认 6000）
+                │     ├── keep: 保留最近 N 条消息（默认 10）
+                │     └── 自动调用摘要 LLM 压缩历史
+                │
+                ├── AsyncSqliteSaver (checkpointer)
+                │     └── 按 thread_id 持久化 Agent 状态
+                │
+                └── 自定义 messages 表
+                      └── 按 conversation_id 存储对话历史
+
+前端 ←── SSE 流式事件 ──← Agent astream_events
+  ├── conversation_id 事件（新对话创建时）
+  ├── chunk 事件（流式输出）
+  ├── loading 事件（工具执行中）
+  ├── action 事件（前端副作用）
+  └── [DONE] 事件
+```
+
+### 联网搜索
+
+支持两种搜索引擎，通过 `WEB_SEARCH_ENGINE` 环境变量切换：
+
+| 引擎 | 配置 | 特点 |
+|------|------|------|
+| **Kimi** | `WEB_SEARCH_ENGINE=kimi` + `MOONSHOT_API_KEY` | 基于 Kimi $web_search，中文搜索优化 |
+| **Tavily** | `WEB_SEARCH_ENGINE=tavily` + `TAVILY_API_KEY` | 基于 Tavily Search API，通用搜索 |
+
+前端提供联网搜索开关，开启后强制先执行搜索，将结果注入上下文后再由主 LLM 回答。
+
+---
+
+## 快速开始
 
 ### 环境要求
 
@@ -113,7 +191,7 @@ shiyuan-ai/
 
 ```bash
 git clone <repository-url>
-cd news-interpretation
+cd shiyuan-ai
 ```
 
 ### 2. 启动 NewsNow 中台（推荐）
@@ -148,7 +226,6 @@ pip install -r requirements.txt
 # 配置环境变量
 cp .env.example .env
 # 编辑 .env 配置 LLM_API_KEY、DASHSCOPE_API_KEY 等
-# NEWSNOW_API_URL 默认 http://localhost:4444/api/s（本地 Docker）
 
 # 启动服务（自动等待 NewsNow 就绪，最多10秒）
 python app.py
@@ -159,7 +236,7 @@ python app.py
 ### 4. 前端启动
 
 ```bash
-cd frontend
+cd web
 
 # 安装依赖
 npm install
@@ -172,37 +249,85 @@ npm run dev
 
 ---
 
-## 🔧 配置说明
+## 配置说明
 
 ### 环境变量（server/.env）
 
 ```env
-# LLM 配置
-LLM_API_KEY=your-api-key
+# ── LLM 配置 ──────────────────────────────────────────────
+LLM_PROVIDER=openai
+LLM_API_KEY=sk-your-api-key-here
 LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-4o-mini
+LLM_MODEL=gpt-3.5-turbo
 
-# DashScope 嵌入（知识库必需）
-DASHSCOPE_API_KEY=your-dashscope-key
-
-# 服务器配置
+# ── 服务器 ────────────────────────────────────────────────
 HOST=0.0.0.0
 PORT=8000
 
-# 爬虫配置
-NEWSNOW_API_URL=http://localhost:4444/api/s   # 本地 Docker（推荐）
-# NEWSNOW_API_URL=https://newsnow.busiyi.world/api/s  # 公共实例（fallback）
-NEWSNOW_CRAWL_INTERVAL=3600
+# ── 爬虫间隔（秒）────────────────────────────────────────
+CRAWL_INTERVAL=1800
+NEWSNOW_CRAWL_INTERVAL=1800
 RSS_CRAWL_INTERVAL=1800
+
+# ── 定时任务 ──────────────────────────────────────────────
 SCHEDULE_ENABLED=true
 
-# 文章内容抓取
+# ── NewsNow API ───────────────────────────────────────────
+# 本地 Docker（推荐）: http://localhost:4444/api/s
+# 公共实例（fallback）: https://newsnow.busiyi.world/api/s
+NEWSNOW_API_URL=http://localhost:4444/api/s
+
+# ── 关键词过滤 ────────────────────────────────────────────
+KEYWORDS_FILE=keywords.txt
+KEYWORDS_FILTER_ENABLED=true
+
+# ── 发布配置 ──────────────────────────────────────────────
+PUBLISH_RETRY=3
+
+# ── 微信公众号（已认证服务号）─────────────────────────────
+WECHAT_APP_ID=your_app_id
+WECHAT_APP_SECRET=your_app_secret
+
+# ── 浏览器自动化（Playwright）─────────────────────────────
+PUBLISH_HEADLESS=true
+PUBLISH_TIMEOUT=120
+
+# ── Jina Reader（免费，无需 API Key）─────────────────────
 JINA_READER_URL=https://r.jina.ai
+
+# ── DashScope（阿里云）────────────────────────────────────
+DASHSCOPE_API_KEY=sk-your-dashscope-key-here
+
+# ── AI 配图 ───────────────────────────────────────────────
+IMAGE_GEN_ENABLED=true
+IMAGE_GEN_MODEL=qwen-image-2.0-pro
+
+# ── 知识库 ────────────────────────────────────────────────
+KB_CHUNK_SIZE=500
+KB_CHUNK_OVERLAP=50
+KB_VISION_MODEL=qwen-vl-ocr-latest
+KB_VISION_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+
+# ── 联网搜索 ──────────────────────────────────────────────
+WEB_SEARCH_ENABLED=true
+WEB_SEARCH_ENGINE=kimi    # kimi / tavily
+
+# Kimi（WEB_SEARCH_ENGINE=kimi 时需要）
+MOONSHOT_API_KEY=sk-your-moonshot-key-here
+
+# Tavily（WEB_SEARCH_ENGINE=tavily 时需要）
+TAVILY_API_KEY=tvly-your-tavily-key-here
+
+# ── 短期记忆 ──────────────────────────────────────────────
+MEMORY_DB_PATH=data/agent_memory.db
+SUMMARY_MODEL=deepseek-chat
+SUMMARY_MODEL_BASE_URL=https://api.openai.com/v1
+SUMMARY_MODEL_API_KEY=sk-your-api-key-here
+SUMMARY_TRIGGER_TOKENS=6000
+SUMMARY_KEEP_MESSAGES=10
 ```
 
 ### NewsNow Docker 配置
-
-`docker-compose.newsnow.yml` 关键配置：
 
 | 配置项 | 值 | 说明 |
 |--------|-----|------|
@@ -214,7 +339,27 @@ JINA_READER_URL=https://r.jina.ai
 
 ---
 
-## 🔌 API 接口
+## API 接口
+
+### 智能体对话
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/agent/chat/stream` | 智能体对话（SSE 流式，支持 `conversation_id` 多轮记忆） |
+| GET | `/api/agent/trends` | 获取热门话题 |
+| GET | `/api/agent/compare` | 多源对比 |
+
+### 对话管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/conversations` | 创建新对话 |
+| GET | `/api/conversations` | 获取对话列表（分页） |
+| GET | `/api/conversations/{id}` | 获取对话详情 |
+| PATCH | `/api/conversations/{id}` | 更新对话标题 |
+| DELETE | `/api/conversations/{id}` | 删除对话（硬删除，清理消息+checkpointer） |
+| GET | `/api/conversations/{id}/messages` | 获取对话历史消息 |
+| DELETE | `/api/conversations/{id}/messages` | 清空对话消息 |
 
 ### 知识库管理
 
@@ -256,43 +401,69 @@ JINA_READER_URL=https://r.jina.ai
 | POST | `/api/interpret/stream` | AI 解读（SSE） |
 | POST | `/api/chat/stream` | 对话式解读（SSE） |
 | POST | `/api/generate_article/stream` | 文章生成（SSE） |
-| POST | `/api/agent/chat/stream` | 智能体对话（SSE） |
 
-### NewsNow 平台
+### 发布与任务
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/newsnow/platforms` | 获取可用平台列表 |
-| POST | `/api/newsnow/refresh` | 刷新全部平台（同步） |
-| POST | `/api/newsnow/refresh/{platform_id}` | 刷新单平台（后台异步） |
+| POST | `/api/publish` | 发布文章到指定平台 |
+| GET | `/api/publish/log` | 获取发布记录 |
+| GET | `/api/tasks` | 获取异步任务列表 |
+| DELETE | `/api/tasks/clear` | 清理已完成任务 |
 
 ---
 
-## 🎨 支持风格
+## 数据库设计
+
+### 主数据库（news_ai.db）
+
+| 表名 | 说明 |
+|------|------|
+| `news` | 新闻数据 |
+| `articles` | 生成的文章 |
+| `publish_log` | 发布记录 |
+| `knowledge_bases` | 知识库 |
+| `kb_documents` | 知识库文档（关联 kb_id） |
+| `kb_chunks` | 文档分块 |
+| `kb_conversations` | 知识库会话 |
+| `kb_messages` | 会话消息 |
+
+### 记忆数据库（data/agent_memory.db）
+
+| 表名 | 说明 |
+|------|------|
+| `conversations` | 智能体对话（id, title, created_at, updated_at） |
+| `messages` | 对话消息（conversation_id, role, content, tool_calls, tool_call_id） |
+| `checkpoints` | LangGraph checkpointer 状态（thread_id 关联 conversation） |
+| `writes` | LangGraph checkpointer 写入记录 |
+
+---
+
+## 支持风格
 
 | 风格 | 标识符 | 特点 |
 |------|--------|------|
-| 小红书 | `xiaohongshu` | emoji 丰富、口语化、话题标签 |
-| 公众号 | `wechat_mp` | 深度长文、专业分析 |
-| 抖音 | `douyin` | 短平快、口播稿 |
+| 小红书 | `xiaohongshu` | emoji 丰富、口语化、话题标签、800字以内 |
+| 公众号 | `wechat_mp` | 深度长文、专业分析、1200-1800字 |
+| 抖音 | `douyin` | 短平快、口播稿、200-300字 |
 
 ---
 
-## 📁 新闻来源
+## 新闻来源
 
 ### NewsNow 平台（通过 Docker 中台聚合）
 
-| 来源 | 标识符 | 别名 |
-|------|--------|------|
-| 财联社热门 | `cls-hot` | `cls_hot` |
-| 财联社电报 | `cls-telegraph` | `cls_telegraph` |
-| 华尔街见闻 | `wallstreetcn-hot` | `wallstreet` |
-| 参考消息 | `cankaoxiaoxi` | `cankao` |
-| 澎湃新闻 | `thepaper` | `pengpai` |
-| 今日头条 | `toutiao` | `toutiao` |
-| 雪球 | `xueqiu` | `xueqiu` |
-| 微博 | `weibo` | `weibo` |
-| 抖音 | `douyin` | `douyin`（视频） |
+| 来源 | 标识符 |
+|------|--------|
+| 财联社热门 | `cls-hot` |
+| 财联社电报 | `cls-telegraph` |
+| 华尔街见闻 | `wallstreetcn-hot` |
+| 参考消息 | `cankaoxiaoxi` |
+| 澎湃新闻 | `thepaper` |
+| 今日头条 | `toutiao` |
+| 雪球 | `xueqiu` |
+| 微博 | `weibo` |
+| 抖音 | `douyin` |
 
 ### RSS 源
 
@@ -326,30 +497,23 @@ JINA_READER_URL=https://r.jina.ai
 
 ---
 
-## 🗄️ 数据库设计
+## 更新日志
 
-| 表名 | 说明 |
-|------|------|
-| `news` | 新闻数据 |
-| `articles` | 生成的文章 |
-| `publish_log` | 发布记录 |
-| `knowledge_bases` | 知识库 |
-| `kb_documents` | 知识库文档（关联 kb_id） |
-| `kb_chunks` | 文档分块 |
-| `kb_conversations` | 知识库会话 |
-| `kb_messages` | 会话消息 |
-
----
-
-## 📝 更新日志
+### v3.0.0
+- **智能体短期记忆**：LangGraph Agent + SummarizationMiddleware + AsyncSqliteSaver
+- **会话管理**：多会话切换、历史恢复、会话列表侧边栏、硬删除清理
+- **联网搜索**：Kimi / Tavily 双引擎，前端一键开关
+- **AI 配图**：DashScope qwen-image 自动生成文章配图
+- **异步任务面板**：后台任务状态实时追踪
+- **关键词过滤设置**：前端可视化管理过滤词组
 
 ### v2.1.0
 - NewsNow Docker 中台：本地部署替代公网 API，端口 4444
 - 爬虫层 httpx → requests：解决与 Nitro 服务器 502 兼容性问题
 - 自动 fallback：主 API 失败自动切换到公共实例
 - 单源刷新非阻塞：`POST /api/news/refresh/{source}` 后台异步执行
-- 正文内容展示：优先后端抓取正文，纯文本渲染替代 iframe（避免 sandbox 报错）
-- JS 渲染源标记：`toutiao`、`cankaoxiaoxi` 标记为动态加载，提示新窗口打开
+- 正文内容展示：优先后端抓取正文，纯文本渲染替代 iframe
+- JS 渲染源标记：`toutiao`、`cankaoxiaoxi` 标记为动态加载
 - 后端启动健康检查：自动等待 NewsNow 就绪（最多 10 秒）
 
 ### v2.0.0
@@ -366,6 +530,6 @@ JINA_READER_URL=https://r.jina.ai
 
 ---
 
-## 📄 许可证
+## 许可证
 
 MIT License

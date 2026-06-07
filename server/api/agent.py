@@ -552,25 +552,29 @@ class AgentChatRequest(BaseModel):
     news_ids: list[str] = Field(default_factory=list)
     current_news_id: str | None = None
     web_search: bool = False
+    conversation_id: str | None = None
 
 
 @router.post("/chat/stream")
 async def agent_chat_stream(req: AgentChatRequest):
-    """Agent chat with function calling. LLM can invoke tools to fetch data and execute actions."""
-    tools = _create_tools(req.current_news_id, req.news_ids)
-    tool_map = {t.name: t for t in tools}
+    """Agent chat with LangGraph Agent + SummarizationMiddleware + SQLite checkpointer.
 
-    # Use deepseek-chat alias to avoid thinking mode issues with reasoning_content
-    from langchain_openai import ChatOpenAI
-    from config import LLM_API_KEY, LLM_BASE_URL
-    agent_llm = ChatOpenAI(
-        model="deepseek-chat",
-        temperature=0.7,
-        api_key=LLM_API_KEY,
-        base_url=LLM_BASE_URL,
-        timeout=120,
-        max_retries=2,
-    )
+    完全保留现有 SSE 事件格式，前端零改动。
+    新增 conversation_id 参数支持多轮对话记忆。
+    """
+    from core.agent_graph import build_agent
+    from core.checkpointer import create_conversation, add_message, get_conversation
+
+    tools = _create_tools(req.current_news_id, req.news_ids)
+
+    # 创建或获取 conversation
+    conv_id = req.conversation_id
+    is_new_conversation = not conv_id
+    if is_new_conversation:
+        # 用用户消息前 20 字作为标题
+        title = req.message[:20] + ("..." if len(req.message) > 20 else "")
+        conv = create_conversation(title=title)
+        conv_id = conv["id"]
 
     current_news_text = ""
     if req.current_news_id:
@@ -583,9 +587,15 @@ async def agent_chat_stream(req: AgentChatRequest):
     if req.news_ids:
         human = f"用户选中的新闻ID: {', '.join(req.news_ids)}\n\n{req.message}"
 
+    # 构建 system prompt
+    system_prompt = AGENT_SYSTEM_PROMPT + current_news_text
+
+    # 构建 Agent
+    agent = await build_agent(tools=tools, system_prompt=system_prompt)
+
     async def event_stream():
-        from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
-        from langchain_core.utils.function_calling import convert_to_openai_tool
+        # 发送 conversation_id 事件（前端需要保存到 localStorage）
+        yield f"data: {json.dumps({'type': 'conversation_id', 'id': conv_id}, ensure_ascii=False)}\n\n"
 
         # 当用户开启联网搜索时，先执行搜索，将结果注入上下文
         web_search_result = None
@@ -608,81 +618,75 @@ async def agent_chat_stream(req: AgentChatRequest):
         else:
             enhanced_human = human
 
-        prompt_text = f"[System]\n{AGENT_SYSTEM_PROMPT + current_news_text}\n\n[User]\n{enhanced_human}"
+        # 保存用户消息到数据库
+        add_message(conv_id, role="user", content=enhanced_human)
+
+        # 发送 prompt 事件
+        prompt_text = f"[System]\n{system_prompt}\n\n[User]\n{enhanced_human}"
         yield f"data: {json.dumps({'type': 'prompt', 'content': prompt_text}, ensure_ascii=False)}\n\n"
 
-        messages = [
-            SystemMessage(content=AGENT_SYSTEM_PROMPT + current_news_text),
-            HumanMessage(content=enhanced_human),
-        ]
-        openai_tools = [convert_to_openai_tool(t) for t in tools]
-        llm_with_tools = agent_llm.bind(tools=openai_tools)
+        # 调用 LangGraph Agent
+        config = {"configurable": {"thread_id": conv_id}}
 
-        for _ in range(5):
-            response = await llm_with_tools.ainvoke(messages)
+        try:
+            stream = agent.astream_events(
+                {"messages": [{"role": "user", "content": enhanced_human}]},
+                config,
+                version="v2",
+            )
 
-            tool_calls = getattr(response, 'tool_calls', None) or response.additional_kwargs.get('tool_calls', None)
-            if not tool_calls:
-                # Pure text — stream it by re-invoking with astream
-                messages.append(response)
-                async for chunk in llm_with_tools.astream(messages[:-1]):
-                    if chunk.content:
-                        data = json.dumps({"type": "chunk", "content": chunk.content}, ensure_ascii=False)
-                        yield f"data: {data}\n\n"
-                break
+            full_response = ""
+            current_tool_name = None
 
-            # Tool calls detected — execute them
-            # If the response had text before tool calls, stream it
-            if response.content:
-                data = json.dumps({"type": "chunk", "content": response.content}, ensure_ascii=False)
-                yield f"data: {data}\n\n"
+            async for event in stream:
+                event_kind = event.get("event", "")
 
-            # Inject reasoning_content into additional_kwargs if present in raw response
-            # (DeepSeek V4 thinking mode requires it for subsequent calls)
-            rc = getattr(response, "reasoning_content", None)
-            if rc:
-                response.additional_kwargs["reasoning_content"] = rc
+                # LLM 输出 token
+                if event_kind == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        if isinstance(chunk.content, str):
+                            full_response += chunk.content
+                            data = json.dumps({"type": "chunk", "content": chunk.content}, ensure_ascii=False)
+                            yield f"data: {data}\n\n"
+                        elif isinstance(chunk.content, list):
+                            for part in chunk.content:
+                                if isinstance(part, dict) and part.get("type") == "text":
+                                    text = part.get("text", "")
+                                    full_response += text
+                                    data = json.dumps({"type": "chunk", "content": text}, ensure_ascii=False)
+                                    yield f"data: {data}\n\n"
 
-            messages.append(response)
+                # 工具开始执行
+                elif event_kind == "on_tool_start":
+                    tool_name = event.get("name", "")
+                    display_name = TOOL_DISPLAY_NAMES.get(tool_name, tool_name)
+                    current_tool_name = tool_name
+                    yield f"data: {json.dumps({'type': 'loading', 'message': f'正在{display_name}...'}, ensure_ascii=False)}\n\n"
 
-            for tc in tool_calls:
-                if hasattr(tc, 'name') and hasattr(tc, 'args') and hasattr(tc, 'id'):
-                    tc_name = tc.name
-                    tc_args = tc.args
-                    tc_id = tc.id
-                elif isinstance(tc, dict):
-                    func = tc.get('function', {})
-                    tc_name = func.get('name', tc.get('name', ''))
-                    tc_args_raw = func.get('arguments', tc.get('args', '{}'))
-                    tc_args = json.loads(tc_args_raw) if isinstance(tc_args_raw, str) else tc_args_raw
-                    tc_id = tc.get('id', '')
-                else:
-                    tc_name = ''
-                    tc_args = {}
-                    tc_id = ''
+                # 工具执行完成
+                elif event_kind == "on_tool_end":
+                    tool_name = event.get("name", current_tool_name or "")
+                    # 工具有前端副作用的发送 action 事件
+                    if tool_name in ("refresh_news", "refresh_source"):
+                        output = event.get("data", {}).get("output", "")
+                        try:
+                            args = json.loads(output) if isinstance(output, str) else {}
+                        except (json.JSONDecodeError, TypeError):
+                            args = {}
+                        yield f"data: {json.dumps({'type': 'action', 'action': {'action': tool_name, **args}}, ensure_ascii=False)}\n\n"
+                    current_tool_name = None
 
-                if not tc_name:
-                    logger.warning("Tool call with empty name, id=%s", tc_id)
-                    messages.append(ToolMessage(content="Error: tool call with empty name", tool_call_id=tc_id or "unknown"))
-                    continue
-                
-                display_name = TOOL_DISPLAY_NAMES.get(tc_name, tc_name)
-                yield f"data: {json.dumps({'type': 'loading', 'message': f'正在{display_name}...'}, ensure_ascii=False)}\n\n"
+            # 保存 AI 回复到数据库
+            if full_response:
+                add_message(conv_id, role="assistant", content=full_response)
 
-                try:
-                    if tc_name not in tool_map:
-                        result = f"未知工具：{tc_name}"
-                    else:
-                        result = await tool_map[tc_name].ainvoke(tc_args)
-                except Exception as e:
-                    logger.exception("Tool %s failed", tc_name)
-                    result = f"工具执行失败：{e}"
-
-                messages.append(ToolMessage(content=str(result), tool_call_id=tc_id))
-
-                # Tools with frontend side effects
-                if tc_name in ("refresh_news", "refresh_source"):
-                    yield f"data: {json.dumps({'type': 'action', 'action': {'action': tc_name, **tc_args}}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.exception("Agent stream failed: %s", e)
+            error_msg = f"处理失败：{e}"
+            yield f"data: {json.dumps({'type': 'error', 'message': error_msg}, ensure_ascii=False)}\n\n"
+            # 保存错误信息到数据库
+            add_message(conv_id, role="assistant", content=error_msg)
 
         yield "data: [DONE]\n\n"
 

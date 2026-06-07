@@ -88,7 +88,33 @@
         <span>AI 助手</span>
       </div>
       <div class="header-actions">
+        <span class="header-btn" title="历史会话" @mousedown.stop @click.stop="toggleConvList">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </span>
+        <span class="header-btn" title="新对话" @mousedown.stop @click.stop="startNewConversation">+</span>
         <span class="header-btn" @mousedown.stop @click.stop="closePanel">✕</span>
+      </div>
+    </div>
+
+    <!-- Conversation list sidebar -->
+    <div v-if="showConvList" class="conv-sidebar">
+      <div class="conv-sidebar-header">
+        <span>历史会话</span>
+        <span class="conv-close-btn" @click="showConvList = false">✕</span>
+      </div>
+      <div class="conv-sidebar-body">
+        <div
+          v-for="conv in convList"
+          :key="conv.id"
+          class="conv-item"
+          :class="{ active: conv.id === currentConversationId }"
+          @click="switchConversation(conv.id)"
+        >
+          <div class="conv-item-title">{{ conv.title }}</div>
+          <div class="conv-item-time">{{ conv.updated_at?.slice(5, 16) }}</div>
+          <span class="conv-item-delete" title="删除" @click.stop="deleteConv(conv.id)">✕</span>
+        </div>
+        <div v-if="convList.length === 0" class="conv-empty">暂无历史会话</div>
       </div>
     </div>
 
@@ -214,8 +240,8 @@
 import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useNewsStore } from '@/stores'
-import { streamAgentChat, streamInterpret, streamGenerateArticle, publishArticle as apiPublishArticle, fetchTrends as apiFetchTrends, compareSources as apiCompareSources, searchNews as apiSearchNews, streamBriefing } from '@/api'
-import type { AgentAction } from '@/api'
+import { streamAgentChat, streamInterpret, streamGenerateArticle, publishArticle as apiPublishArticle, fetchTrends as apiFetchTrends, compareSources as apiCompareSources, searchNews as apiSearchNews, streamBriefing, listConversations, getConversationMessages, deleteConversation as apiDeleteConversation } from '@/api'
+import type { AgentAction, Conversation } from '@/api'
 import type { StyleType } from '@/types'
 import { marked } from 'marked'
 
@@ -250,6 +276,9 @@ const messagesRef = ref<HTMLElement | null>(null)
 const chatMessage = ref('')
 const generating = ref(false)
 const webSearchEnabled = ref(false)
+const currentConversationId = ref<string | null>(null)
+const showConvList = ref(false)
+const convList = ref<Conversation[]>([])
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -665,6 +694,67 @@ async function handleAction(action: AgentAction) {
 
 // ── Chat ────────────────────────────────────────────────────
 
+function startNewConversation() {
+  currentConversationId.value = null
+  showConvList.value = false
+  messages.value = [
+    { role: 'assistant', content: '你好！我可以和你聊天、解读新闻、搜索热点、生成文章，还能帮你执行网站操作。直接说就行！', type: 'chat' },
+  ]
+}
+
+async function toggleConvList() {
+  showConvList.value = !showConvList.value
+  if (showConvList.value) {
+    await loadConvList()
+  }
+}
+
+async function loadConvList() {
+  try {
+    const data = await listConversations(50)
+    convList.value = data.items
+  } catch {
+    convList.value = []
+  }
+}
+
+async function switchConversation(convId: string) {
+  if (convId === currentConversationId.value) {
+    showConvList.value = false
+    return
+  }
+  try {
+    const data = await getConversationMessages(convId)
+    currentConversationId.value = convId
+    showConvList.value = false
+    // Rebuild messages from history
+    const loaded: ChatMessage[] = []
+    for (const msg of data.messages) {
+      if (msg.role === 'user' || msg.role === 'assistant') {
+        loaded.push({ role: msg.role, content: msg.content, type: 'chat' })
+      }
+    }
+    messages.value = loaded.length > 0
+      ? loaded
+      : [{ role: 'assistant', content: '你好！我可以和你聊天、解读新闻、搜索热点、生成文章，还能帮你执行网站操作。直接说就行！', type: 'chat' }]
+    scrollToBottom()
+  } catch (e: any) {
+    ElMessage.error('加载会话失败')
+  }
+}
+
+async function deleteConv(convId: string) {
+  try {
+    await apiDeleteConversation(convId)
+    if (convId === currentConversationId.value) {
+      startNewConversation()
+    }
+    await loadConvList()
+  } catch {
+    ElMessage.error('删除失败')
+  }
+}
+
 function onInputEnter(e: KeyboardEvent) {
   if (e.ctrlKey || e.shiftKey) return
   e.preventDefault()
@@ -725,6 +815,9 @@ async function sendChat() {
     onAction(action) {
       pendingActions.push(action)
     },
+    onConversationId(id) {
+      currentConversationId.value = id
+    },
     onDone() {
       const content = messages.value[currentMsgIdx].content.trim()
       if (!content || content.startsWith('⏳')) {
@@ -741,7 +834,7 @@ async function sendChat() {
     onError(err) {
       pushAssistantError(currentMsgIdx, `请求失败：${err}`)
     },
-  }, currentNewsId, webSearchEnabled.value)
+  }, currentNewsId, webSearchEnabled.value, currentConversationId.value)
 }
 
 // ── Drag ────────────────────────────────────────────────────
@@ -1448,5 +1541,94 @@ onBeforeUnmount(() => {
   width: 14px;
   height: 14px;
   cursor: se-resize;
+}
+
+/* ── Conversation sidebar ──────────────────────────── */
+.conv-sidebar {
+  position: absolute;
+  top: 48px;
+  left: 0;
+  bottom: 0;
+  width: 220px;
+  background: #f8f9fb;
+  border-right: 1px solid #e5e7eb;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  animation: slideIn 0.2s ease;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(-100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.conv-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.conv-close-btn {
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 12px;
+}
+.conv-close-btn:hover { color: #6b7280; }
+
+.conv-sidebar-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.conv-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  position: relative;
+}
+.conv-item:hover { background: #eef2ff; }
+.conv-item.active { background: #e0e7ff; }
+
+.conv-item-title {
+  flex: 1;
+  font-size: 12px;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-item-time {
+  font-size: 10px;
+  color: #9ca3af;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.conv-item-delete {
+  display: none;
+  margin-left: 4px;
+  font-size: 10px;
+  color: #9ca3af;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.conv-item:hover .conv-item-delete { display: inline; }
+.conv-item-delete:hover { color: #ef4444; }
+
+.conv-empty {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 12px;
+  padding: 24px 0;
 }
 </style>

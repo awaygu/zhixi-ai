@@ -313,13 +313,15 @@ export interface AgentStreamCallbacks extends StreamCallbacks {
   onAction?: (action: AgentAction) => void
   onLoadingDone?: () => void
   onSources?: (sources: { filename: string; score: number }[]) => void
+  onConversationId?: (id: string) => void
 }
 
 /** Stream agent chat (general chat with action detection). */
-export function streamAgentChat(message: string, newsIds: string[], callbacks: AgentStreamCallbacks, currentNewsId?: string, webSearch = false) {
+export function streamAgentChat(message: string, newsIds: string[], callbacks: AgentStreamCallbacks, currentNewsId?: string, webSearch = false, conversationId?: string) {
   const body: Record<string, any> = { message, news_ids: newsIds }
   if (currentNewsId) body.current_news_id = currentNewsId
   if (webSearch) body.web_search = true
+  if (conversationId) body.conversation_id = conversationId
   return consumeAgentSSE('/api/agent/chat/stream', body, callbacks)
 }
 
@@ -376,6 +378,8 @@ async function consumeAgentSSE(path: string, body: Record<string, any>, callback
               callbacks.onSources?.(parsed.sources)
             } else if (parsed.type === 'meta') {
               callbacks.onMeta?.(parsed)
+            } else if (parsed.type === 'conversation_id' && parsed.id) {
+              callbacks.onConversationId?.(parsed.id)
             } else if (parsed.type === 'done') {
               callbacks.onDone()
               return
@@ -396,6 +400,49 @@ async function consumeAgentSSE(path: string, body: Record<string, any>, callback
 export async function executeAction(action: string, params?: Record<string, any>): Promise<Record<string, any>> {
   const body: Record<string, any> = { action, ...params }
   const res = await api.post('/agent/execute', body)
+  return res.data
+}
+
+// ── Conversations ──────────────────────────────────────────────
+
+export interface Conversation {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ConversationMessage {
+  id: number
+  role: 'user' | 'assistant' | 'system' | 'tool'
+  content: string
+  tool_calls?: string
+  tool_call_id?: string
+  name?: string
+  created_at: string
+}
+
+export async function createConversation(title = '新对话'): Promise<Conversation> {
+  const res = await api.post('/conversations', { title })
+  return res.data
+}
+
+export async function listConversations(limit = 20, offset = 0): Promise<{ total: number; items: Conversation[] }> {
+  const res = await api.get('/conversations', { params: { limit, offset } })
+  return res.data
+}
+
+export async function getConversation(convId: string): Promise<Conversation> {
+  const res = await api.get(`/conversations/${convId}`)
+  return res.data
+}
+
+export async function deleteConversation(convId: string): Promise<void> {
+  await api.delete(`/conversations/${convId}`)
+}
+
+export async function getConversationMessages(convId: string): Promise<{ conversation_id: string; messages: ConversationMessage[] }> {
+  const res = await api.get(`/conversations/${convId}/messages`)
   return res.data
 }
 

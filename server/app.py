@@ -48,6 +48,7 @@ from api.prompts import router as prompts_router
 from api.agent import router as agent_router
 from api.knowledge import router as knowledge_router
 from api.tasks import router as tasks_router
+from api.conversations import router as conversations_router
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -79,6 +80,11 @@ async def lifespan(app: FastAPI):
     await _wait_for_newsnow()
 
     await init_db()
+
+    # 初始化记忆数据库
+    from core.checkpointer import init_db as init_memory_db
+    from config import MEMORY_DB_PATH
+    init_memory_db(MEMORY_DB_PATH)
 
     persisted_news = await load_news()
     if persisted_news:
@@ -150,6 +156,7 @@ app.include_router(prompts_router)
 app.include_router(agent_router)
 app.include_router(knowledge_router)
 app.include_router(tasks_router)
+app.include_router(conversations_router)
 
 
 if __name__ == "__main__":
