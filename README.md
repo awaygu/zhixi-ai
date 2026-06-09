@@ -36,11 +36,13 @@ shiyuan-ai/
 │   ├── requirements.txt        # Python 依赖
 │   ├── .env.example            # 环境变量模板
 │   ├── data/                   # 运行时数据目录
-│   │   └── agent_memory.db     # Agent 记忆数据库（自动创建）
+│   │   ├── agent_memory.db     # Agent 记忆数据库（自动创建）
+│   │   └── rag_memory.db      # KB RAG 记忆数据库（自动创建）
 │   ├── uploads/                # 文件上传目录（按知识库隔离）
 │   ├── cookies/                # 浏览器登录 Cookie 持久化
 │   ├── core/                   # AI 核心模块
 │   │   ├── agent_graph.py      # LangGraph Agent 定义（create_agent + SummarizationMiddleware）
+│   │   ├── rag_graph.py        # KB RAG 短期记忆 LangGraph（rewrite_query + retrieve + generate）
 │   │   ├── checkpointer.py     # SQLite 持久化层（conversations + messages 双表）
 │   │   ├── interpreter.py      # 新闻解读器
 │   │   ├── style_manager.py    # 风格管理器
@@ -116,6 +118,7 @@ shiyuan-ai/
 | **多知识库管理** | 创建/删除知识库，每个知识库独立向量索引 |
 | **文档上传与解析** | 支持 PDF / DOCX / TXT / MD，自动分块嵌入 |
 | **RAG 语义检索** | DashScope 嵌入 + FAISS 向量检索，引用来源 |
+| **RAG 短期记忆** | LangGraph StateGraph + 查询重写 + SummarizationMiddleware 自动摘要压缩 |
 | **多风格文章生成** | 小红书 / 公众号 / 抖音三种风格 |
 | **联网搜索** | 支持 Kimi / Tavily 双引擎，前端一键开关 |
 | **智能体短期记忆** | LangGraph Agent + SummarizationMiddleware 自动摘要压缩 |
@@ -144,6 +147,10 @@ shiyuan-ai/
 
 ### 短期记忆实现
 
+智能体与知识库 RAG 各自独立实现短期记忆，采用相同的核心组件但配置独立。
+
+#### Agent 短期记忆
+
 ```
 用户消息 ──▶ LangGraph Agent (create_agent)
                 │
@@ -165,6 +172,53 @@ shiyuan-ai/
   ├── action 事件（前端副作用）
   └── [DONE] 事件
 ```
+
+#### KB RAG 短期记忆
+
+```
+用户消息 ──▶ LangGraph StateGraph (rag_graph)
+                │
+                ├── rewrite_query 节点（意图识别 + 查询重写）
+                │     ├── 规则前置过滤（零成本，~80% 请求直接跳过）
+                │     │     ├── 代词检测（它/那/这/上述/刚才）
+                │     │     ├── 短句检测（<15字且无主语）
+                │     │     └── 祈使句检测（详细/展开/进一步）
+                │     └── LLM 精确判断（规则命中时触发）
+                │           ├── new_question: 全新问题，直接检索
+                │           ├── follow_up_need_search: 追问需检索，消解代词后重写查询
+                │           └── follow_up_no_search: 纯追问，跳过检索复用上轮结果
+                │
+                ├── retrieve 节点（条件执行）
+                │     ├── skip_retrieve=False → embed(rewritten_query) → FAISS 检索
+                │     └── skip_retrieve=True → 复用 last_context + last_sources
+                │
+                ├── generate 节点
+                │     ├── SummarizationMiddleware
+                │     │     ├── trigger: token 数超过阈值（默认 4000）
+                │     │     ├── keep: 保留最近 N 条消息（默认 8）
+                │     │     └── 仅压缩 Human/AIMessage（检索内容不入历史）
+                │     ├── SystemMessage(RAG_PROMPT + context) [临时，不持久化]
+                │     ├── messages(历史) + HumanMessage(query) [持久化到 checkpointer]
+                │     └── LLM.astream() → SSE 流式输出
+                │
+                ├── AsyncSqliteSaver (独立 rag_memory.db)
+                │     └── 按 thread_id=kb_{kb_id} 持久化 RAG state
+                │
+                └── kb_messages 双写（前端展示用）
+
+前端 ←── SSE 流式事件 ──← rag_graph.astream_events
+  ├── rewrite 事件（查询被重写时，显示原文与改写后的查询）
+  ├── prompt 事件（完整 prompt 内容）
+  ├── sources 事件（检索来源）
+  ├── chunk 事件（流式输出）
+  └── [DONE] 事件
+```
+
+**关键设计决策：**
+- **检索内容不入历史**（策略 B）：每轮 RAG context 临时注入 SystemMessage，不持久化到 messages，避免文档片段被摘要压缩导致信息损失
+- **单会话/知识库**：每个知识库仅一个固定会话 `conv_id=kb_{kb_id}`，无会话列表
+- **旧历史自动迁移**：首次请求时从 `kb_messages` 表加载旧对话，注入 checkpointer 后由 LangGraph 接管
+- **清空会话**：同时清理 `kb_messages` + LangGraph checkpoint 数据
 
 ### 联网搜索
 
@@ -318,13 +372,18 @@ MOONSHOT_API_KEY=sk-your-moonshot-key-here
 # Tavily（WEB_SEARCH_ENGINE=tavily 时需要）
 TAVILY_API_KEY=tvly-your-tavily-key-here
 
-# ── 短期记忆 ──────────────────────────────────────────────
+# ── 短期记忆（智能体）──────────────────────────────────────
 MEMORY_DB_PATH=data/agent_memory.db
 SUMMARY_MODEL=deepseek-chat
 SUMMARY_MODEL_BASE_URL=https://api.openai.com/v1
 SUMMARY_MODEL_API_KEY=sk-your-api-key-here
 SUMMARY_TRIGGER_TOKENS=6000
 SUMMARY_KEEP_MESSAGES=10
+
+# ── 短期记忆（KB RAG）──────────────────────────────────────
+KB_RAG_SUMMARY_TRIGGER_TOKENS=4000
+KB_RAG_SUMMARY_KEEP_MESSAGES=8
+KB_RAG_MEMORY_DB_PATH=data/rag_memory.db
 ```
 
 ### NewsNow Docker 配置
@@ -387,7 +446,9 @@ SUMMARY_KEEP_MESSAGES=10
 | GET | `/api/knowledge/bases/{kb_id}/conversations` | 获取会话列表 |
 | DELETE | `/api/knowledge/bases/{kb_id}/conversations/{conv_id}` | 删除会话 |
 | GET | `/api/knowledge/bases/{kb_id}/conversations/{conv_id}/messages` | 获取会话消息 |
-| POST | `/api/knowledge/bases/{kb_id}/chat/stream` | RAG 对话（SSE 流式） |
+| POST | `/api/knowledge/bases/{kb_id}/chat/stream` | RAG 对话（SSE 流式，含短期记忆 + 查询重写） |
+| DELETE | `/api/knowledge/bases/{kb_id}/chat/clear` | 清空会话（同时清理消息 + LangGraph checkpoint） |
+| GET | `/api/knowledge/bases/{kb_id}/chat/messages` | 获取当前会话消息（单会话模式） |
 | POST | `/api/knowledge/bases/{kb_id}/generate/stream` | RAG 文章生成（SSE 流式） |
 
 ### 新闻与解读
@@ -436,6 +497,14 @@ SUMMARY_KEEP_MESSAGES=10
 | `messages` | 对话消息（conversation_id, role, content, tool_calls, tool_call_id） |
 | `checkpoints` | LangGraph checkpointer 状态（thread_id 关联 conversation） |
 | `writes` | LangGraph checkpointer 写入记录 |
+
+### RAG 记忆数据库（data/rag_memory.db）
+
+| 表名 | 说明 |
+|------|------|
+| `checkpoints` | KB RAG LangGraph checkpointer 状态（thread_id = kb_{kb_id}） |
+| `writes` | KB RAG checkpointer 写入记录 |
+| `checkpoint_blobs` | KB RAG checkpointer 二进制数据 |
 
 ---
 
@@ -498,6 +567,16 @@ SUMMARY_KEEP_MESSAGES=10
 ---
 
 ## 更新日志
+
+### v3.1.0
+- **KB RAG 短期记忆**：LangGraph StateGraph + SummarizationMiddleware，多轮对话上下文自动保持
+- **查询意图识别与重写**：规则前置过滤（代词/短句/祈使句）+ LLM 精确判断，追问时自动消解代词补全查询
+- **检索内容不入历史**：RAG context 每轮临时注入，仅 Human/AIMessage 持久化，避免文档片段摘要质量损失
+- **条件检索**：纯解释性追问跳过检索，复用上轮结果，节省嵌入 API 调用
+- **单会话模式**：每个知识库固定一个会话，支持一键清空（同时清理消息 + checkpoint）
+- **独立 RAG 记忆库**：`data/rag_memory.db` 与 Agent 记忆库隔离
+- **旧历史自动迁移**：首次请求时从 kb_messages 加载旧对话注入 LangGraph checkpointer
+- **SSE 新增 rewrite 事件**：查询被重写时前端可展示原文与改写后的查询对比
 
 ### v3.0.0
 - **智能体短期记忆**：LangGraph Agent + SummarizationMiddleware + AsyncSqliteSaver

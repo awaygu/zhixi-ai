@@ -30,6 +30,7 @@ from database import (
     delete_conversation,
     save_message,
     load_messages,
+    clear_kb_messages,
 )
 from rag.embeddings import DashScopeEmbedding
 from rag.chunker import TextChunker
@@ -483,13 +484,16 @@ async def save_msg(kb_id: str, conv_id: str, req: SaveMessageRequest):
     return {"msg_id": msg_id}
 
 
-# ── RAG Chat (SSE stream) ──────────────────────────────────────
+# ── RAG Chat (SSE stream, with short-term memory) ──────────────
 
 class KBChatRequest(BaseModel):
     message: str
     doc_ids: list[str] = Field(default_factory=list)
     top_k: int = Field(default=5, ge=1, le=10)
-    conv_id: str = ""
+
+
+def _kb_conv_id(kb_id: str) -> str:
+    return f"kb_{kb_id}"
 
 
 @router.post("/bases/{kb_id}/chat/stream")
@@ -502,78 +506,111 @@ async def kb_chat_stream(kb_id: str, req: KBChatRequest):
     if vector_store.total_vectors == 0:
         raise HTTPException(400, "Knowledge base is empty. Please upload documents first.")
 
-    try:
-        query_vec = embedding_client.embed_query(req.message)
-    except Exception as e:
-        raise HTTPException(500, f"Embedding failed: {e}")
+    conv_id = _kb_conv_id(kb_id)
 
-    hits = vector_store.search(query_vec, top_k=10)
-    chunk_ids = [cid for cid, _ in hits]
-    score_map = {cid: score for cid, score in hits}
+    existing_convs = await load_conversations(kb_id)
+    if not any(c["conv_id"] == conv_id for c in existing_convs):
+        await create_conversation({"conv_id": conv_id, "kb_id": kb_id, "title": kb["name"]})
 
-    selected_doc_set = set(req.doc_ids) if req.doc_ids else None
-    chunk_data = await load_kb_chunk_texts(chunk_ids)
+    from core.rag_graph import get_rag_graph, migrate_history
+    from langchain_core.messages import HumanMessage, AIMessage
 
-    if selected_doc_set:
-        chunk_data = {cid: cd for cid, cd in chunk_data.items() if cd.get("doc_id") in selected_doc_set}
+    rag_graph = await get_rag_graph()
 
-    filtered_hits = [(cid, score_map[cid]) for cid in chunk_ids if cid in chunk_data]
+    config = {"configurable": {"thread_id": conv_id}}
 
-    context_parts = []
-    for cid, _ in filtered_hits:
-        cd = chunk_data[cid]
-        page_info = f", 第{cd['page']}页" if cd.get("page", 0) > 0 else ""
-        context_parts.append(f"[来源: {cd['filename']}{page_info}]\n{cd['text']}")
+    existing_state = await rag_graph.aget_state(config)
+    if not existing_state.values or not existing_state.values.get("messages"):
+        old_messages = await migrate_history(conv_id)
+        if old_messages:
+            await rag_graph.aupdate_state(config, {"messages": old_messages}, as_node="generate")
 
-    context_text = "\n\n".join(context_parts) if context_parts else "（未检索到相关内容）"
-
-    full_system = KB_RAG_SYSTEM_PROMPT + f"\n\n【知识库内容】\n{context_text}"
+    input_state = {
+        "query": req.message,
+        "kb_id": kb_id,
+        "doc_ids": req.doc_ids,
+        "top_k": req.top_k,
+    }
 
     async def event_stream():
-        from langchain_openai import ChatOpenAI
-        from langchain_core.messages import SystemMessage, HumanMessage
-
-        llm = ChatOpenAI(
-            model="deepseek-chat",
-            temperature=0.7,
-            api_key=LLM_API_KEY,
-            base_url=LLM_BASE_URL,
-            timeout=120,
-            max_retries=2,
-        )
-
-        prompt_text = f"[System]\n{full_system}\n\n[User]\n{req.message}"
-        yield f"data: {json.dumps({'type': 'prompt', 'content': prompt_text}, ensure_ascii=False)}\n\n"
-
-        sources = [{"filename": chunk_data[cid]["filename"], "page": chunk_data[cid].get("page", 0), "score": round(score, 4), "text": chunk_data[cid]["text"], "preview": chunk_data[cid]["text"][:80] + ("..." if len(chunk_data[cid]["text"]) > 80 else "")}
-                   for cid, score in filtered_hits]
-        if sources:
-            yield f"data: {json.dumps({'type': 'sources', 'sources': sources}, ensure_ascii=False)}\n\n"
-
-        messages = [
-            SystemMessage(content=full_system),
-            HumanMessage(content=req.message),
-        ]
-
+        prompt_sent = False
+        sources_sent = False
         full_content = ""
+        sources_out = []
+        rewrite_info = None
+
+        msg_id = uuid.uuid4().hex[:12]
+        await save_message({
+            "msg_id": msg_id,
+            "conv_id": conv_id,
+            "role": "user",
+            "content": req.message,
+            "type": "chat",
+            "sources": "",
+        })
+
         try:
-            async for chunk in llm.astream(messages):
-                if chunk.content:
-                    full_content += chunk.content
-                    data = json.dumps({"type": "chunk", "content": chunk.content}, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
+            async for event in rag_graph.astream_events(
+                input_state, config=config, version="v2"
+            ):
+                kind = event.get("event", "")
+
+                if kind == "on_chain_end" and event.get("name") == "rewrite_query":
+                    output = event.get("data", {}).get("output", {})
+                    if output.get("rewritten_query") != req.message:
+                        rewrite_info = {
+                            "original": req.message,
+                            "rewritten": output.get("rewritten_query", req.message),
+                            "skip_retrieve": output.get("skip_retrieve", False),
+                        }
+                        yield f"data: {json.dumps({'type': 'rewrite', 'rewrite': rewrite_info}, ensure_ascii=False)}\n\n"
+
+                elif kind == "on_chain_end" and event.get("name") == "retrieve":
+                    output = event.get("data", {}).get("output", {})
+                    sources_out = output.get("sources", [])
+                    context_text = output.get("context", "")
+                    prompt_text = f"[System]\n{KB_RAG_SYSTEM_PROMPT}\n\n【知识库内容】\n{context_text}\n\n[User]\n{req.message}"
+                    if not prompt_sent:
+                        yield f"data: {json.dumps({'type': 'prompt', 'content': prompt_text}, ensure_ascii=False)}\n\n"
+                        prompt_sent = True
+                    if sources_out and not sources_sent:
+                        yield f"data: {json.dumps({'type': 'sources', 'sources': sources_out}, ensure_ascii=False)}\n\n"
+                        sources_sent = True
+
+                elif kind == "on_chat_model_stream":
+                    if not prompt_sent:
+                        cur_state = await rag_graph.aget_state(config)
+                        last_sources = (cur_state.values or {}).get("last_sources", [])
+                        last_context = (cur_state.values or {}).get("last_context", "")
+                        prompt_text = f"[System]\n{KB_RAG_SYSTEM_PROMPT}\n\n【知识库内容】\n{last_context}\n\n[User]\n{req.message}"
+                        yield f"data: {json.dumps({'type': 'prompt', 'content': prompt_text}, ensure_ascii=False)}\n\n"
+                        prompt_sent = True
+                        if last_sources and not sources_sent:
+                            sources_out = last_sources
+                            yield f"data: {json.dumps({'type': 'sources', 'sources': last_sources}, ensure_ascii=False)}\n\n"
+                            sources_sent = True
+
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and chunk.content:
+                        full_content += chunk.content
+                        data = json.dumps({"type": "chunk", "content": chunk.content}, ensure_ascii=False)
+                        yield f"data: {data}\n\n"
+
+            if not prompt_sent:
+                yield f"data: {json.dumps({'type': 'prompt', 'content': f'[User]\\n{req.message}'}, ensure_ascii=False)}\n\n"
+
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 
-        if req.conv_id and full_content:
-            msg_id = uuid.uuid4().hex[:12]
+        if full_content:
+            asst_msg_id = uuid.uuid4().hex[:12]
             await save_message({
-                "msg_id": msg_id,
-                "conv_id": req.conv_id,
+                "msg_id": asst_msg_id,
+                "conv_id": conv_id,
                 "role": "assistant",
                 "content": full_content,
                 "type": "chat",
-                "sources": json.dumps(sources, ensure_ascii=False) if sources else "",
+                "sources": json.dumps(sources_out, ensure_ascii=False) if sources_out else "",
             })
 
         yield "data: [DONE]\n\n"
@@ -585,6 +622,45 @@ async def kb_chat_stream(kb_id: str, req: KBChatRequest):
     )
 
 
+# ── Clear KB Chat ───────────────────────────────────────────────
+
+@router.delete("/bases/{kb_id}/chat/clear")
+async def clear_kb_chat(kb_id: str):
+    kb = await load_kb(kb_id)
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+
+    conv_id = _kb_conv_id(kb_id)
+
+    from core.rag_graph import clear_rag_checkpointer
+    await clear_rag_checkpointer(conv_id)
+
+    cleared = await clear_kb_messages(conv_id)
+
+    return {"cleared": True, "kb_id": kb_id, "messages_removed": cleared}
+
+
+# ── KB Chat Messages ────────────────────────────────────────────
+
+@router.get("/bases/{kb_id}/chat/messages")
+async def get_kb_chat_messages(kb_id: str):
+    kb = await load_kb(kb_id)
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+
+    conv_id = _kb_conv_id(kb_id)
+    msgs = await load_messages(conv_id)
+    for m in msgs:
+        if m.get("sources"):
+            try:
+                m["sources"] = json.loads(m["sources"])
+            except Exception:
+                m["sources"] = []
+        else:
+            m["sources"] = []
+    return {"messages": msgs}
+
+
 # ── RAG Generate Article (SSE stream) ──────────────────────────
 
 class KBGenerateRequest(BaseModel):
@@ -592,7 +668,6 @@ class KBGenerateRequest(BaseModel):
     style: str = "wechat_mp"
     doc_ids: list[str] = Field(default_factory=list)
     top_k: int = Field(default=5, ge=1, le=10)
-    conv_id: str = ""
 
 
 @router.post("/bases/{kb_id}/generate/stream")
@@ -671,6 +746,8 @@ async def kb_generate_stream(kb_id: str, req: KBGenerateRequest):
             HumanMessage(content=human),
         ]
 
+        conv_id = _kb_conv_id(kb_id)
+
         full_content = ""
         try:
             async for chunk in llm.astream(messages):
@@ -681,11 +758,11 @@ async def kb_generate_stream(kb_id: str, req: KBGenerateRequest):
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 
-        if req.conv_id and full_content:
+        if full_content:
             msg_id = uuid.uuid4().hex[:12]
             await save_message({
                 "msg_id": msg_id,
-                "conv_id": req.conv_id,
+                "conv_id": conv_id,
                 "role": "assistant",
                 "content": full_content,
                 "type": "article",

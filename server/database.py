@@ -562,6 +562,13 @@ async def save_message(msg: dict[str, Any]) -> None:
         await db.commit()
 
 
+async def clear_kb_messages(conv_id: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM kb_messages WHERE conv_id = ?", (conv_id,))
+        await db.commit()
+        return cursor.rowcount
+
+
 async def load_messages(conv_id: str) -> list[dict[str, Any]]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
